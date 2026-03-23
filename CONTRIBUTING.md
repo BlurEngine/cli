@@ -6,7 +6,7 @@ Thanks for helping improve BlurEngine CLI.
 
 Requirements:
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - npm 10 or newer
 
 Setup:

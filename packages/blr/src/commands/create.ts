@@ -253,7 +253,7 @@ function createPackageJson(
         dependencies,
         devDependencies,
         engines: {
-            node: ">=20.0.0",
+            node: ">=22.0.0",
         },
     };
 }
