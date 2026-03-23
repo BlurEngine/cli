@@ -1,0 +1,341 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/BlurConfigFile",
+  "definitions": {
+    "BlurConfigFile": {
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "type": "string",
+          "description": "JSON Schema reference used by editors such as VS Code and Cursor for completion, hover text, and validation."
+        },
+        "schemaVersion": {
+          "type": "number",
+          "const": 1,
+          "description": "Configuration schema version. Keep this at 1."
+        },
+        "projectVersion": {
+          "type": "number",
+          "description": "Generated-project scaffold version managed by blr. This is upgraded by `blr upgrade`, not by hand."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Required project namespace used by BlurEngine project logic."
+        },
+        "minecraft": {
+          "$ref": "#/definitions/BlurConfigMinecraftFile",
+          "description": "Project-level Minecraft targeting defaults."
+        },
+        "upgrade": {
+          "$ref": "#/definitions/BlurConfigUpgradeFile",
+          "description": "Project-level defaults for `blr upgrade`."
+        },
+        "world": {
+          "$ref": "#/definitions/BlurConfigWorldFile",
+          "description": "Optional remote world backend configuration."
+        },
+        "package": {
+          "$ref": "#/definitions/BlurConfigPackageFile",
+          "description": "Packaging defaults for `blr package`."
+        },
+        "runtime": {
+          "$ref": "#/definitions/BlurConfigRuntimeFile",
+          "description": "Optional script build overrides."
+        },
+        "dev": {
+          "$ref": "#/definitions/BlurConfigDevFile",
+          "description": "Project-level defaults for `blr dev`."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project-level configuration for a BlurEngine Bedrock project."
+    },
+    "BlurConfigMinecraftFile": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "$ref": "#/definitions/MinecraftChannel",
+          "description": "Default Bedrock release channel used by local-server, local-deploy preference order, and version checks."
+        },
+        "targetVersion": {
+          "type": "string",
+          "description": "Target Minecraft version, for example `1.26.0.2`."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project-level Minecraft targeting defaults."
+    },
+    "MinecraftChannel": {
+      "type": "string",
+      "enum": ["stable", "preview"]
+    },
+    "BlurConfigUpgradeFile": {
+      "type": "object",
+      "properties": {
+        "refreshAgents": {
+          "type": "boolean",
+          "description": "Refresh managed `AGENTS.md` content by default."
+        },
+        "refreshDependencies": {
+          "type": "boolean",
+          "description": "Refresh dependency baselines in `package.json` by default."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project-level defaults for `blr upgrade`."
+    },
+    "BlurConfigWorldFile": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "$ref": "#/definitions/WorldBackend",
+          "description": "World source backend. Use `s3` to enable `blr world pull/push` against an S3-compatible store."
+        },
+        "s3": {
+          "$ref": "#/definitions/BlurConfigWorldS3File",
+          "description": "S3-compatible world backend coordinates."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Optional remote world backend configuration."
+    },
+    "WorldBackend": {
+      "type": "string",
+      "enum": ["local", "s3"]
+    },
+    "BlurConfigWorldS3File": {
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "type": "string",
+          "description": "Bucket name used for remote world storage."
+        },
+        "region": {
+          "type": "string",
+          "description": "AWS region for the S3 client."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Optional custom S3-compatible endpoint."
+        },
+        "keyPrefix": {
+          "type": "string",
+          "description": "Static prefix prepended to remote world objects."
+        },
+        "projectPrefix": {
+          "type": "boolean",
+          "description": "Whether to include the project name in remote world object keys."
+        },
+        "forcePathStyle": {
+          "type": "boolean",
+          "description": "Enable path-style S3 addressing for providers that require it."
+        },
+        "lockTtlSeconds": {
+          "type": "number",
+          "description": "Default remote world lock TTL in seconds."
+        }
+      },
+      "additionalProperties": false,
+      "description": "S3-compatible backend coordinates. Credentials should stay in environment variables, not here."
+    },
+    "BlurConfigPackageFile": {
+      "type": "object",
+      "properties": {
+        "defaultTarget": {
+          "$ref": "#/definitions/PackageTarget",
+          "description": "Default package target used when `blr package` is run without an explicit target."
+        },
+        "worldTemplate": {
+          "$ref": "#/definitions/BlurConfigPackageWorldTemplateFile",
+          "description": "World-template packaging defaults."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Packaging defaults for `blr package`."
+    },
+    "PackageTarget": {
+      "type": "string",
+      "const": "world-template"
+    },
+    "BlurConfigPackageWorldTemplateFile": {
+      "type": "object",
+      "properties": {
+        "include": {
+          "$ref": "#/definitions/BlurConfigPackFeatureSelectionFile",
+          "description": "Pack inclusion defaults for world-template packaging."
+        }
+      },
+      "additionalProperties": false,
+      "description": "World-template packaging defaults."
+    },
+    "BlurConfigPackFeatureSelectionFile": {
+      "type": "object",
+      "properties": {
+        "behaviorPack": {
+          "type": "boolean",
+          "description": "Whether the behavior pack is enabled in this automation context."
+        },
+        "resourcePack": {
+          "type": "boolean",
+          "description": "Whether the resource pack is enabled in this automation context."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Per-pack feature toggles for behavior-pack and resource-pack automation."
+    },
+    "BlurConfigRuntimeFile": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "type": "string",
+          "description": "Project-relative runtime entry file. If omitted, blr infers `src/main.ts` or `src/main.js`."
+        },
+        "outFile": {
+          "type": "string",
+          "description": "Project-relative bundled runtime output path before it is synced into staged pack output."
+        },
+        "target": {
+          "type": "string",
+          "description": "esbuild target for runtime bundling."
+        },
+        "sourcemap": {
+          "type": "boolean",
+          "description": "Whether runtime bundling should emit sourcemaps."
+        },
+        "externalModules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Bedrock modules that should stay external during runtime bundling."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Optional script build overrides."
+    },
+    "BlurConfigDevFile": {
+      "type": "object",
+      "properties": {
+        "watch": {
+          "$ref": "#/definitions/BlurConfigWatchFile",
+          "description": "Watch-mode defaults."
+        },
+        "localDeploy": {
+          "$ref": "#/definitions/BlurConfigLocalDeployFile",
+          "description": "`local-deploy` defaults."
+        },
+        "localServer": {
+          "$ref": "#/definitions/BlurConfigLocalServerFile",
+          "description": "`local-server` defaults."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project-level defaults for `blr dev`."
+    },
+    "BlurConfigWatchFile": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Project-relative watch path patterns."
+        },
+        "debounceMs": {
+          "type": "number",
+          "description": "Watcher debounce time in milliseconds."
+        },
+        "scriptsEnabledByDefault": {
+          "type": "boolean",
+          "description": "Default interactive selection for `watch-scripts`."
+        },
+        "worldEnabledByDefault": {
+          "type": "boolean",
+          "description": "Default interactive selection for `watch-world`."
+        },
+        "allowlistEnabledByDefault": {
+          "type": "boolean",
+          "description": "Default interactive selection for `watch-allowlist`."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Watch-mode defaults for `blr dev`."
+    },
+    "BlurConfigLocalDeployFile": {
+      "type": "object",
+      "properties": {
+        "enabledByDefault": {
+          "type": "boolean",
+          "description": "Whether `local-deploy` starts selected by default."
+        },
+        "copy": {
+          "$ref": "#/definitions/BlurConfigPackFeatureSelectionFile",
+          "description": "Pack copy defaults for this automation context."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project-level defaults for `local-deploy`."
+    },
+    "BlurConfigLocalServerFile": {
+      "type": "object",
+      "properties": {
+        "enabledByDefault": {
+          "type": "boolean",
+          "description": "Whether `local-server` starts selected by default."
+        },
+        "worldName": {
+          "type": "string",
+          "description": "Active BDS world name."
+        },
+        "worldSourcePath": {
+          "type": "string",
+          "description": "Project-relative raw world source path, usually `worlds/<worldName>`."
+        },
+        "restartOnWorldChange": {
+          "type": "boolean",
+          "description": "Restart and reset the local server when the project world source changes."
+        },
+        "copy": {
+          "$ref": "#/definitions/BlurConfigPackFeatureSelectionFile",
+          "description": "Pack copy defaults for local-server staging."
+        },
+        "attach": {
+          "$ref": "#/definitions/BlurConfigPackFeatureSelectionFile",
+          "description": "Pack attachment defaults for local-server world hooks."
+        },
+        "allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Fallback allowlist XUIDs when `server/allowlist.json` does not exist."
+        },
+        "operators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Fallback operator XUIDs when `server/permissions.json` does not exist."
+        },
+        "defaultPermissionLevel": {
+          "$ref": "#/definitions/PermissionLevel",
+          "description": "Default BDS player permission level."
+        },
+        "gamemode": {
+          "type": "string",
+          "description": "Default BDS gamemode."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project-level defaults for `local-server`."
+    },
+    "PermissionLevel": {
+      "type": "string",
+      "enum": ["visitor", "member", "operator", "custom"]
+    }
+  },
+  "$id": "https://blurengine.dev/schema/blr.config.schema.json",
+  "title": "BlurEngine Config",
+  "description": "Project-level configuration for a BlurEngine Bedrock project."
+}

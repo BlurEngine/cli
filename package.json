@@ -1,0 +1,47 @@
+{
+  "name": "cli",
+  "private": true,
+  "version": "0.1.0",
+  "description": "BlurEngine CLI workspace.",
+  "author": "Blur Engine Limited",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BlurEngine/cli.git"
+  },
+  "homepage": "https://github.com/BlurEngine/cli",
+  "bugs": {
+    "url": "https://github.com/BlurEngine/cli/issues"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "packageManager": "npm@10.8.2",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "npm run --workspaces build",
+    "clean": "npm run --workspaces clean",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "npm run --workspaces lint",
+    "check": "npm run format:check && npm run --workspaces check",
+    "test": "npm run --workspaces test",
+    "dev:blr": "npm run --workspace @blurengine/cli dev",
+    "hooks:install": "node ./scripts/install-hooks.mjs",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish",
+    "prepare": "npm run hooks:install"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.6.0",
+    "@changesets/cli": "^2.29.7",
+    "@types/node": "^22.13.10",
+    "@types/prompts": "^2.4.9",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "legacy-project-v0",
+  "private": true,
+  "scripts": {
+    "build": "old build"
+  }
+}

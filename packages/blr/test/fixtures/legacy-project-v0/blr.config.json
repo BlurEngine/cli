@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "namespace": "legacy_project",
+  "minecraft": {
+    "channel": "stable",
+    "targetVersion": "1.26.0.2"
+  }
+}

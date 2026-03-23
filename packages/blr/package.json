@@ -1,0 +1,69 @@
+{
+  "name": "@blurengine/cli",
+  "version": "0.1.0",
+  "description": "BlurEngine generator and lifecycle CLI.",
+  "author": "Blur Engine Limited",
+  "license": "Apache-2.0",
+  "keywords": [
+    "blurengine",
+    "minecraft",
+    "bedrock",
+    "cli",
+    "gamedev"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BlurEngine/cli.git",
+    "directory": "packages/blr"
+  },
+  "homepage": "https://github.com/BlurEngine/cli",
+  "bugs": {
+    "url": "https://github.com/BlurEngine/cli/issues"
+  },
+  "type": "module",
+  "bin": {
+    "blr": "./dist/blr.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "schema",
+    "docs",
+    "NOTICE"
+  ],
+  "scripts": {
+    "sync:legal": "node ./scripts/sync-legal-files.mjs",
+    "generate:schema": "node ./scripts/generate-config-schema.mjs",
+    "build": "npm run sync:legal && npm run generate:schema && tsc -p tsconfig.json",
+    "prepare": "node ./scripts/prepare-package.mjs",
+    "prepack": "npm run build",
+    "pretest": "npm run build",
+    "clean": "node -e \"const fs=require('node:fs'); fs.rmSync('dist', { recursive: true, force: true });\"",
+    "dev": "tsx src/blr.ts --help",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "lint": "npm run typecheck && npm run typecheck:test",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "pack:dry-run": "npm pack --dry-run",
+    "pack:smoke": "node ./scripts/pack-smoke.mjs",
+    "check": "npm run lint && npm run test && npm run pack:smoke"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1011.0",
+    "adm-zip": "^0.5.16",
+    "chokidar": "^4.0.3",
+    "commander": "^13.1.0",
+    "esbuild": "^0.25.10",
+    "picomatch": "^4.0.2",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
+    "ts-json-schema-generator": "^2.4.0"
+  }
+}

@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a problem with the CLI or generated projects.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Include commands, config, and any relevant files.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        If this is a generated project, please run the `system` package script with your project package manager. For example:
+
+        - `npm run system -- info --format markdown`
+        - `npm run system -- doctor --format markdown`
+        - `pnpm run system -- info --format markdown`
+        - `pnpm run system -- doctor --format markdown`
+        - `yarn run system -- info --format markdown`
+        - `yarn run system -- doctor --format markdown`
+        - `bun run system -- info --format markdown`
+        - `bun run system -- doctor --format markdown`
+
+        Otherwise run:
+
+        - `blr system info --format markdown`
+        - `blr system doctor --format markdown`
+
+        Paste the output here.
+    validations:
+      required: true
