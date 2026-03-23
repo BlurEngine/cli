@@ -59,7 +59,7 @@
     "chokidar": "^4.0.3",
     "commander": "^13.1.0",
     "esbuild": "^0.25.10",
-    "picomatch": "^4.0.2",
+    "picomatch": "^4.0.3",
     "prompts": "^2.4.2"
   },
   "devDependencies": {
