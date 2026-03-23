@@ -37,7 +37,6 @@
     "sync:legal": "node ./scripts/sync-legal-files.mjs",
     "generate:schema": "node ./scripts/generate-config-schema.mjs",
     "build": "npm run sync:legal && npm run generate:schema && tsc -p tsconfig.json",
-    "prepare": "node ./scripts/prepare-package.mjs",
     "prepack": "npm run build",
     "pretest": "npm run build",
     "clean": "node -e \"const fs=require('node:fs'); fs.rmSync('dist', { recursive: true, force: true });\"",
