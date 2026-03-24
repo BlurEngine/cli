@@ -53,7 +53,7 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1011.0",
+    "@aws-sdk/client-s3": "3.1014.0",
     "adm-zip": "^0.5.16",
     "chokidar": "^4.0.3",
     "commander": "^13.1.0",
