@@ -173,6 +173,18 @@ Optional project state file.
 
 If present, `blr` applies it to BDS permissions state.
 
+### `server/bedrock_server.exe`
+
+Optional project state file for Windows local-server runs.
+
+If present, `blr` copies it into the resolved runtime BDS server directory and uses it as the local-server executable override.
+
+Notes:
+
+- this overrides the provisioned `bedrock_server.exe` in the runtime BDS folder
+- if the runtime BDS server is already provisioned, `blr` reuses that server and applies the override without re-downloading the stock archive
+- `blr dev` prints a notice when the override is active
+
 ## Generated Support Files
 
 ### `.gitignore`

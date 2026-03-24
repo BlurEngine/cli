@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import { mkdtemp, rename, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { createInterface, type Interface } from "node:readline";
 import AdmZip from "adm-zip";
 import { resolveDirectBedrockDownloadUrl } from "./bedrock-downloads.js";
@@ -13,6 +13,7 @@ import { resolveProjectRelativePath } from "./environment.js";
 import {
     copyDirectory,
     ensureDirectory,
+    ensureParentDirectory,
     exists,
     readJson,
     readText,
@@ -34,7 +35,10 @@ import {
     resolveConfiguredWorldSourcePath,
     resolveProjectWorldSourceDirectory,
 } from "./world.js";
-import { resolveProjectServerStatePath } from "./server-state.js";
+import {
+    PROJECT_SERVER_STATE_ROOT,
+    resolveProjectServerStatePath,
+} from "./server-state.js";
 
 type AllowlistEntry = {
     xuid: string;
@@ -63,6 +67,8 @@ export type ResolvedBdsState = {
     worldSourceDirectory: string;
     executablePath: string;
     zipPath: string;
+    customExecutableSourcePath?: string;
+    customExecutableInjected: boolean;
 };
 
 function resolveBdsPlatform(
@@ -120,7 +126,46 @@ export function resolveBdsRuntimeState(
                 ? `bedrock-server-preview-${version}-${platform}.zip`
                 : `bedrock-server-${version}-${platform}.zip`,
         ),
+        customExecutableInjected: false,
     };
+}
+
+function resolveProjectCustomExecutablePath(
+    projectRoot: string,
+    state: ResolvedBdsState,
+): string {
+    return path.join(
+        projectRoot,
+        PROJECT_SERVER_STATE_ROOT,
+        path.basename(state.executablePath),
+    );
+}
+
+async function applyCustomExecutableOverride(
+    projectRoot: string,
+    state: ResolvedBdsState,
+    debug?: DebugLogger,
+): Promise<void> {
+    const customExecutableSourcePath = resolveProjectCustomExecutablePath(
+        projectRoot,
+        state,
+    );
+    if (!(await exists(customExecutableSourcePath))) {
+        return;
+    }
+
+    await ensureParentDirectory(state.executablePath);
+    await copyFile(customExecutableSourcePath, state.executablePath);
+    if (state.platform === "linux") {
+        await chmod(state.executablePath, 0o755);
+    }
+
+    state.customExecutableSourcePath = customExecutableSourcePath;
+    state.customExecutableInjected = true;
+    debug?.log("bds", "applied custom BDS executable override", {
+        sourcePath: customExecutableSourcePath,
+        executablePath: state.executablePath,
+    });
 }
 
 async function downloadIfMissing(
@@ -363,6 +408,7 @@ async function extractIfMissing(
             await readProjectPermissions(projectRoot, config),
         );
         await ensureModulePermissions(state.serverDirectory);
+        await applyCustomExecutableOverride(projectRoot, state, debug);
         return;
     }
 
@@ -418,6 +464,7 @@ async function extractIfMissing(
         await readProjectPermissions(projectRoot, config),
     );
     await ensureModulePermissions(state.serverDirectory);
+    await applyCustomExecutableOverride(projectRoot, state, debug);
 }
 
 async function copyBuiltArtifacts(
@@ -887,6 +934,21 @@ export class BdsServerController {
     private async start(state: ResolvedBdsState): Promise<void> {
         if (this.isRunning()) {
             return;
+        }
+
+        if (state.customExecutableInjected) {
+            const sourceLabel = state.customExecutableSourcePath
+                ? path.relative(
+                      this.projectRoot,
+                      state.customExecutableSourcePath,
+                  )
+                : path.join(
+                      PROJECT_SERVER_STATE_ROOT,
+                      path.basename(state.executablePath),
+                  );
+            console.log(
+                `[dev] Notice: using custom local-server executable override from ${sourceLabel}.`,
+            );
         }
 
         this.options.debug?.log("bds", "starting managed server", {
