@@ -1,5 +1,6 @@
 import {
     compareDotVersions,
+    fetchWithTimeout,
     type FetchImplementation,
     fetchBedrockDownloadLinks,
     resolveDirectBedrockDownloadUrl,
@@ -8,11 +9,20 @@ import {
 import type { DebugLogger } from "./debug.js";
 import type { BdsPlatform, MinecraftChannel } from "./types.js";
 
+const BEDROCK_ARTIFACT_PROBE_TIMEOUT_MS = 10_000;
+
 export type MinecraftVersionStatus = {
     channel: MinecraftChannel;
     configuredVersion: string;
     latestVersion: string;
     outdated: boolean;
+    artifactAvailable: boolean;
+    oppositeChannel: MinecraftChannel;
+    oppositeChannelArtifactAvailable: boolean;
+    looksLikeChannelMismatch: boolean;
+};
+
+export type MinecraftArtifactStatus = {
     artifactAvailable: boolean;
     oppositeChannel: MinecraftChannel;
     oppositeChannelArtifactAvailable: boolean;
@@ -38,38 +48,40 @@ export async function probeBedrockArtifactAvailability(
         url,
     });
 
-    let response = await fetchImplementation(url, {
-        method: "HEAD",
-        redirect: "follow",
-    });
+    let response = await fetchWithTimeout(
+        url,
+        {
+            method: "HEAD",
+            redirect: "follow",
+        },
+        BEDROCK_ARTIFACT_PROBE_TIMEOUT_MS,
+        fetchImplementation,
+    );
 
     if (!response.ok && (response.status === 403 || response.status === 405)) {
-        response = await fetchImplementation(url, {
-            method: "GET",
-            redirect: "follow",
-            headers: {
-                range: "bytes=0-0",
+        response = await fetchWithTimeout(
+            url,
+            {
+                method: "GET",
+                redirect: "follow",
+                headers: {
+                    range: "bytes=0-0",
+                },
             },
-        });
+            BEDROCK_ARTIFACT_PROBE_TIMEOUT_MS,
+            fetchImplementation,
+        );
     }
 
     return response.ok;
 }
 
-export async function resolveMinecraftVersionStatus(
+export async function resolveMinecraftArtifactStatus(
     channel: MinecraftChannel,
     configuredVersion: string,
     debug?: DebugLogger,
     fetchImplementation: FetchImplementation = fetch,
-): Promise<MinecraftVersionStatus> {
-    const downloads = await fetchBedrockDownloadLinks(
-        debug,
-        fetchImplementation,
-    );
-    const latestVersion = resolveLatestBedrockVersionForChannel(
-        downloads,
-        channel,
-    );
+): Promise<MinecraftArtifactStatus> {
     const artifactAvailable = await probeBedrockArtifactAvailability(
         channel,
         "win",
@@ -89,14 +101,43 @@ export async function resolveMinecraftVersionStatus(
           );
 
     return {
-        channel,
-        configuredVersion,
-        latestVersion,
-        outdated: compareDotVersions(configuredVersion, latestVersion) < 0,
         artifactAvailable,
         oppositeChannel,
         oppositeChannelArtifactAvailable,
         looksLikeChannelMismatch:
             !artifactAvailable && oppositeChannelArtifactAvailable,
+    };
+}
+
+export async function resolveMinecraftVersionStatus(
+    channel: MinecraftChannel,
+    configuredVersion: string,
+    debug?: DebugLogger,
+    fetchImplementation: FetchImplementation = fetch,
+    artifactStatus?: MinecraftArtifactStatus,
+): Promise<MinecraftVersionStatus> {
+    const resolvedArtifactStatus =
+        artifactStatus ??
+        (await resolveMinecraftArtifactStatus(
+            channel,
+            configuredVersion,
+            debug,
+            fetchImplementation,
+        ));
+    const downloads = await fetchBedrockDownloadLinks(
+        debug,
+        fetchImplementation,
+    );
+    const latestVersion = resolveLatestBedrockVersionForChannel(
+        downloads,
+        channel,
+    );
+
+    return {
+        channel,
+        configuredVersion,
+        latestVersion,
+        outdated: compareDotVersions(configuredVersion, latestVersion) < 0,
+        ...resolvedArtifactStatus,
     };
 }

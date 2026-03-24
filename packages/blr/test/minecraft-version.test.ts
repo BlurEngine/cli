@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveDirectBedrockDownloadUrl } from "../src/bedrock-downloads.js";
-import { resolveMinecraftVersionStatus } from "../src/minecraft-version.js";
+import {
+    resolveMinecraftArtifactStatus,
+    resolveMinecraftVersionStatus,
+} from "../src/minecraft-version.js";
 import { createEmptyResponse, createJsonResponse } from "./helpers.js";
 
 const DOWNLOAD_LINKS_URL =
@@ -95,5 +98,54 @@ test("resolveMinecraftVersionStatus detects when a configured version belongs to
     assert.equal(status.latestVersion, "1.26.3.1");
     assert.equal(status.artifactAvailable, false);
     assert.equal(status.looksLikeChannelMismatch, true);
+    assert.equal(status.oppositeChannelArtifactAvailable, true);
+});
+
+test("resolveMinecraftArtifactStatus probes artifact availability before any latest-version lookup", async () => {
+    const fetchImplementation = createMockFetch({
+        [`HEAD ${resolveDirectBedrockDownloadUrl("stable", "win", "1.26.20.20")}`]:
+            createEmptyResponse(404),
+        [`HEAD ${resolveDirectBedrockDownloadUrl("preview", "win", "1.26.20.20")}`]:
+            createEmptyResponse(200),
+    });
+
+    const status = await resolveMinecraftArtifactStatus(
+        "stable",
+        "1.26.20.20",
+        undefined,
+        fetchImplementation,
+    );
+
+    assert.equal(status.artifactAvailable, false);
+    assert.equal(status.looksLikeChannelMismatch, true);
+    assert.equal(status.oppositeChannel, "preview");
+    assert.equal(status.oppositeChannelArtifactAvailable, true);
+});
+
+test("resolveMinecraftVersionStatus reuses provided artifact status without reprobeing the artifact URL", async () => {
+    const fetchImplementation = createMockFetch({
+        [`GET ${DOWNLOAD_LINKS_URL}`]: createJsonResponse(
+            createDownloadLinksPayload(),
+        ),
+    });
+
+    const status = await resolveMinecraftVersionStatus(
+        "stable",
+        "1.26.0.2",
+        undefined,
+        fetchImplementation,
+        {
+            artifactAvailable: false,
+            oppositeChannel: "preview",
+            oppositeChannelArtifactAvailable: true,
+            looksLikeChannelMismatch: true,
+        },
+    );
+
+    assert.equal(status.latestVersion, "1.26.3.1");
+    assert.equal(status.outdated, true);
+    assert.equal(status.artifactAvailable, false);
+    assert.equal(status.looksLikeChannelMismatch, true);
+    assert.equal(status.oppositeChannel, "preview");
     assert.equal(status.oppositeChannelArtifactAvailable, true);
 });

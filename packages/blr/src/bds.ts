@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, rename, writeFile } from "node:fs/promises";
 import { createInterface, type Interface } from "node:readline";
 import AdmZip from "adm-zip";
 import { resolveDirectBedrockDownloadUrl } from "./bedrock-downloads.js";
@@ -17,6 +17,7 @@ import {
     readJson,
     readText,
     removeDirectory,
+    removePath,
     writeJson,
     writeText,
 } from "./fs.js";
@@ -127,12 +128,23 @@ async function downloadIfMissing(
     debug?: DebugLogger,
 ): Promise<void> {
     if (await exists(state.zipPath)) {
-        debug?.log("bds", "using cached BDS archive", {
-            zipPath: state.zipPath,
-            version: state.version,
-            platform: state.platform,
-        });
-        return;
+        try {
+            const zip = new AdmZip(state.zipPath);
+            zip.getEntries();
+            debug?.log("bds", "using cached BDS archive", {
+                zipPath: state.zipPath,
+                version: state.version,
+                platform: state.platform,
+            });
+            return;
+        } catch {
+            debug?.log("bds", "discarding invalid cached BDS archive", {
+                zipPath: state.zipPath,
+                version: state.version,
+                platform: state.platform,
+            });
+            await removePath(state.zipPath);
+        }
     }
 
     await ensureDirectory(state.cacheDirectory);
@@ -153,6 +165,14 @@ async function downloadIfMissing(
     }
 
     const buffer = Buffer.from(await response.arrayBuffer());
+    try {
+        const zip = new AdmZip(buffer);
+        zip.getEntries();
+    } catch {
+        throw new Error(
+            `Downloaded BDS ${state.version} from ${url}, but the response was not a valid ZIP archive. Verify minecraft.targetVersion and minecraft.channel.`,
+        );
+    }
     await writeFile(state.zipPath, buffer);
     debug?.log("bds", "downloaded BDS archive", {
         zipPath: state.zipPath,
@@ -347,10 +367,38 @@ async function extractIfMissing(
     }
 
     await downloadIfMissing(state, debug);
-    await removeDirectory(state.serverDirectory);
-    await ensureDirectory(state.serverDirectory);
-    const zip = new AdmZip(state.zipPath);
-    zip.extractAllTo(state.serverDirectory, true);
+    const stagingDirectory = await mkdtemp(
+        path.join(
+            path.dirname(state.serverDirectory),
+            `${path.basename(state.serverDirectory)}.tmp-`,
+        ),
+    );
+    let extracted = false;
+    try {
+        const zip = new AdmZip(state.zipPath);
+        zip.extractAllTo(stagingDirectory, true);
+        if (
+            !(await exists(
+                path.join(
+                    stagingDirectory,
+                    path.basename(state.executablePath),
+                ),
+            ))
+        ) {
+            await removePath(state.zipPath);
+            throw new Error(
+                `Downloaded BDS ${state.version} did not contain ${path.basename(state.executablePath)}. Verify minecraft.targetVersion and minecraft.channel.`,
+            );
+        }
+
+        await removeDirectory(state.serverDirectory);
+        await rename(stagingDirectory, state.serverDirectory);
+        extracted = true;
+    } finally {
+        if (!extracted) {
+            await removeDirectory(stagingDirectory);
+        }
+    }
     debug?.log("bds", "extracted BDS server", {
         zipPath: state.zipPath,
         serverDirectory: state.serverDirectory,

@@ -40,8 +40,9 @@ Useful commands:
 
 - Release intent is tracked with Changesets.
 - The release workflow is defined in `.github/workflows/publish.yml`.
-- GitHub Actions will open or update a release PR from committed changeset files.
-- Merging that PR will publish `@blurengine/cli` through the configured npm trusted publisher workflow.
+- GitHub Actions will open or update a release PR from committed changeset files without requiring release-environment approval.
+- The workflow only requests `release` environment approval when the local `@blurengine/cli` version is ahead of the version already published on npm.
+- Merging the release PR will publish `@blurengine/cli` through the configured npm trusted publisher workflow after that approval is granted.
 
 ## Contributions and Licensing
 

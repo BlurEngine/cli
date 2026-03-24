@@ -3,6 +3,7 @@ import type { BdsPlatform, MinecraftChannel } from "./types.js";
 
 const BEDROCK_DOWNLOAD_LINKS_URL =
     "https://net-secondary.web.minecraft-services.net/api/v1.0/download/links";
+const BEDROCK_DOWNLOAD_REQUEST_TIMEOUT_MS = 10_000;
 
 export type FetchImplementation = typeof fetch;
 
@@ -25,6 +26,37 @@ export type BedrockDownloadLinks = {
     latestStableVersion: string;
     latestPreviewVersion?: string;
 };
+
+export async function fetchWithTimeout(
+    input: RequestInfo | URL,
+    init: RequestInit | undefined,
+    timeoutMs: number,
+    fetchImplementation: FetchImplementation = fetch,
+): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetchImplementation(input, {
+            ...init,
+            signal: controller.signal,
+        });
+    } catch (error) {
+        if (
+            error instanceof Error &&
+            (error.name === "AbortError" ||
+                error.message.includes("aborted") ||
+                error.message.includes("AbortError"))
+        ) {
+            throw new Error(
+                `Timed out after ${timeoutMs}ms while contacting the Bedrock download service.`,
+            );
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
 
 function requireDownloadUrl(
     links: DownloadLink[],
@@ -94,11 +126,16 @@ export async function fetchBedrockDownloadLinks(
         url: BEDROCK_DOWNLOAD_LINKS_URL,
     });
 
-    const response = await fetchImplementation(BEDROCK_DOWNLOAD_LINKS_URL, {
-        headers: {
-            accept: "application/json",
+    const response = await fetchWithTimeout(
+        BEDROCK_DOWNLOAD_LINKS_URL,
+        {
+            headers: {
+                accept: "application/json",
+            },
         },
-    });
+        BEDROCK_DOWNLOAD_REQUEST_TIMEOUT_MS,
+        fetchImplementation,
+    );
 
     if (!response.ok) {
         throw new Error(

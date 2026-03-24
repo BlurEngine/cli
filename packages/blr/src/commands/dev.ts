@@ -19,7 +19,10 @@ import {
     readConfiguredMinecraftTargetVersion,
     writeMinecraftTargetVersion,
 } from "../minecraft-config.js";
-import { resolveMinecraftVersionStatus } from "../minecraft-version.js";
+import {
+    resolveMinecraftArtifactStatus,
+    resolveMinecraftVersionStatus,
+} from "../minecraft-version.js";
 import { runPrompt } from "../prompt.js";
 import { buildProject, runLocalDeploy } from "../runtime.js";
 import type { BlurConfigFile, BlurProject } from "../types.js";
@@ -78,6 +81,8 @@ type DevResolvedOptions = {
     bdsCacheDir?: string;
     bdsServerDir?: string;
     restartOnWorldChange?: boolean;
+    exitMessage?: string;
+    exitIsError?: boolean;
 };
 
 type DevDefaultSelections = {
@@ -95,8 +100,14 @@ type DevDefaultSelections = {
 };
 
 type MinecraftTargetUpdateChoice = "update" | "continue" | "silence";
+type DevInteractiveSelectionResult = {
+    keepLocalServer: boolean;
+    exitMessage?: string;
+    exitIsError?: boolean;
+    continueMessage?: string;
+};
 type DevInteractiveHooks = {
-    onLocalServerSelected?: () => Promise<void>;
+    onLocalServerSelected?: () => Promise<DevInteractiveSelectionResult | void>;
 };
 
 type PipelineMode = "start" | "reload" | "restart";
@@ -164,6 +175,19 @@ function resolveFlag(
 ): boolean {
     if (typeof explicit === "boolean") return explicit;
     return fallback;
+}
+
+function logDevExit(message: string, isError = false): void {
+    if (isError) {
+        if (process.stderr.isTTY) {
+            console.error(`\x1b[31m[dev] Error:\x1b[0m ${message}`);
+            return;
+        }
+        console.error(`[dev] Error: ${message}`);
+        return;
+    }
+
+    console.log(`[dev] ${message}`);
 }
 
 function hasExplicitActionSelection(options: DevCommandOptions): boolean {
@@ -323,11 +347,53 @@ async function resolveDevOptions(
 
     const selectedActions = new Set<string>(actionAnswers.checks ?? []);
     const localDeploy = selectedActions.has("localDeploy");
-    const localServer = selectedActions.has("localServer");
+    let localServer = selectedActions.has("localServer");
     const watchOverallEnabled = options.watch ?? true;
+    let exitMessage: string | undefined;
+    let exitIsError = false;
+    let continueMessage: string | undefined;
 
     if (localServer) {
-        await hooks?.onLocalServerSelected?.();
+        const localServerSelection = await hooks?.onLocalServerSelected?.();
+        if (localServerSelection?.keepLocalServer === false) {
+            localServer = false;
+            exitMessage = localServerSelection.exitMessage;
+            exitIsError = localServerSelection.exitIsError ?? false;
+            continueMessage = localServerSelection.continueMessage;
+        }
+    }
+
+    if (!localDeploy && !localServer) {
+        return {
+            localDeploy,
+            localDeployBehaviorPack: false,
+            localDeployResourcePack: false,
+            localServer,
+            localServerBehaviorPack: false,
+            localServerResourcePack: false,
+            attachBehaviorPack: false,
+            attachResourcePack: false,
+            interactive: true,
+            selectedAnyAction: false,
+            watch: watchOverallEnabled,
+            watchScripts: false,
+            watchWorld: false,
+            watchAllowlist: false,
+            production: options.production ?? false,
+            minecraftProduct: options.minecraftProduct,
+            minecraftDevelopmentPath: options.minecraftDevelopmentPath,
+            bdsVersion: options.bdsVersion,
+            bdsPlatform: options.bdsPlatform,
+            bdsCacheDir: options.bdsCacheDir,
+            bdsServerDir: options.bdsServerDir,
+            restartOnWorldChange: options.restartOnWorldChange,
+            exitMessage,
+            exitIsError,
+        };
+    }
+
+    if (continueMessage) {
+        logDevExit(continueMessage);
     }
 
     let watchScripts = false;
@@ -494,6 +560,8 @@ async function resolveDevOptions(
         bdsCacheDir: options.bdsCacheDir,
         bdsServerDir: options.bdsServerDir,
         restartOnWorldChange: options.restartOnWorldChange,
+        exitMessage,
+        exitIsError,
     };
 }
 
@@ -537,41 +605,154 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 let status: Awaited<
                     ReturnType<typeof resolveMinecraftVersionStatus>
                 >;
+                let artifactStatus: Awaited<
+                    ReturnType<typeof resolveMinecraftArtifactStatus>
+                >;
 
                 try {
+                    console.log(
+                        "[dev] Checking local-server Bedrock targetVersion...",
+                    );
+                    artifactStatus = await resolveMinecraftArtifactStatus(
+                        config.minecraft.channel,
+                        configuredTargetVersion,
+                        debug,
+                    );
+                    if (!artifactStatus.artifactAvailable) {
+                        if (artifactStatus.looksLikeChannelMismatch) {
+                            console.log(
+                                `[dev] Warning: minecraft.channel is ${config.minecraft.channel}, but targetVersion ${configuredTargetVersion} only appears to resolve on ${artifactStatus.oppositeChannel}.`,
+                            );
+                        } else {
+                            console.log(
+                                `[dev] Warning: minecraft.targetVersion ${configuredTargetVersion} could not be resolved on the ${config.minecraft.channel} Bedrock dedicated-server channel.`,
+                            );
+                        }
+                    }
+
                     status = await resolveMinecraftVersionStatus(
                         config.minecraft.channel,
                         configuredTargetVersion,
                         debug,
+                        fetch,
+                        artifactStatus,
                     );
                 } catch (error) {
                     const message =
                         error instanceof Error ? error.message : String(error);
                     debug.log(
                         "bedrock-downloads",
-                        "skipping target-version prompt after lookup failure",
+                        "continuing after target-version lookup failure",
                         {
                             message,
                         },
                     );
-                    return;
+                    console.log(
+                        `[dev] Warning: could not verify minecraft.targetVersion before starting local server (${message}). Continuing with the configured version.`,
+                    );
+                    return { keepLocalServer: true };
                 }
 
                 if (!status.artifactAvailable) {
-                    if (status.looksLikeChannelMismatch) {
-                        console.log(
-                            `[dev] Warning: minecraft.channel is ${config.minecraft.channel}, but targetVersion ${configuredTargetVersion} only appears to resolve on ${status.oppositeChannel}.`,
+                    const silenced =
+                        await isMinecraftTargetUpdatePromptSilenced(
+                            projectRoot,
+                            config.minecraft.channel,
+                            status.latestVersion,
                         );
-                    } else {
+                    if (silenced) {
+                        debug.log(
+                            "bedrock-downloads",
+                            "invalid target-version prompt is currently silenced",
+                            {
+                                channel: config.minecraft.channel,
+                                configuredVersion: configuredTargetVersion,
+                                latestChannelVersion: status.latestVersion,
+                            },
+                        );
+                        return {
+                            keepLocalServer: false,
+                            exitMessage: `Local server was disabled because minecraft.targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel.`,
+                            exitIsError: true,
+                            continueMessage: `Continuing without local server because minecraft.targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel.`,
+                        };
+                    }
+
+                    const promptMessage = [
+                        status.looksLikeChannelMismatch
+                            ? `targetVersion ${configuredTargetVersion} appears to belong to the ${status.oppositeChannel} channel, so the local server cannot start on ${config.minecraft.channel}.`
+                            : `targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel, so the local server cannot start with this version.`,
+                        `The latest ${config.minecraft.channel} version is ${status.latestVersion}.`,
+                        "How would you like to continue?",
+                    ].join("\n");
+
+                    const promptResult = await runPrompt({
+                        type: "select",
+                        name: "minecraftTargetUpdateChoice",
+                        message: promptMessage,
+                        choices: [
+                            {
+                                title: `Update targetVersion to ${status.latestVersion} and continue with local server`,
+                                value: "update",
+                            },
+                            {
+                                title: "Continue without local server",
+                                value: "continue",
+                            },
+                            {
+                                title: "Silence this prompt for 24 hours and continue without local server",
+                                value: "silence",
+                            },
+                        ],
+                        initial: 1,
+                        hint: "- Use arrow keys. Enter to confirm.",
+                        instructions: false,
+                    });
+
+                    const choice = promptResult.minecraftTargetUpdateChoice as
+                        | MinecraftTargetUpdateChoice
+                        | undefined;
+
+                    if (choice === "update") {
+                        await writeMinecraftTargetVersion(
+                            configPath,
+                            status.latestVersion,
+                        );
+                        applyMinecraftTargetVersion(
+                            config,
+                            status.latestVersion,
+                        );
+                        await clearMinecraftTargetUpdatePromptSilence(
+                            projectRoot,
+                        );
                         console.log(
-                            `[dev] Warning: minecraft.targetVersion ${configuredTargetVersion} could not be resolved on the ${config.minecraft.channel} Bedrock dedicated-server channel.`,
+                            `[dev] Updated minecraft.targetVersion to ${status.latestVersion}.`,
+                        );
+                        return { keepLocalServer: true };
+                    }
+
+                    if (choice === "silence") {
+                        await silenceMinecraftTargetUpdatePrompt(
+                            projectRoot,
+                            config.minecraft.channel,
+                            status.latestVersion,
+                        );
+                        console.log(
+                            `[dev] Silenced Minecraft target-version update prompts for 24 hours.`,
                         );
                     }
+
+                    return {
+                        keepLocalServer: false,
+                        exitMessage: `Local server was disabled because minecraft.targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel.`,
+                        exitIsError: true,
+                        continueMessage: `Continuing without local server because minecraft.targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel.`,
+                    };
                 }
 
                 if (!status.outdated) {
                     await clearMinecraftTargetUpdatePromptSilence(projectRoot);
-                    return;
+                    return { keepLocalServer: true };
                 }
 
                 if (
@@ -590,7 +771,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                             latestChannelVersion: status.latestVersion,
                         },
                     );
-                    return;
+                    return { keepLocalServer: true };
                 }
 
                 const channelLabel =
@@ -640,7 +821,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                     console.log(
                         `[dev] Updated minecraft.targetVersion to ${status.latestVersion}.`,
                     );
-                    return;
+                    return { keepLocalServer: true };
                 }
 
                 if (choice === "silence") {
@@ -653,6 +834,8 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                         `[dev] Silenced Minecraft target-version update prompts for 24 hours.`,
                     );
                 }
+
+                return { keepLocalServer: true };
             },
         },
     );
@@ -694,7 +877,10 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     });
 
     if (resolved.interactive && !resolved.selectedAnyAction) {
-        console.log("[dev] No dev actions selected. Exiting.");
+        logDevExit(
+            resolved.exitMessage ?? "No dev actions selected. Exiting.",
+            resolved.exitIsError,
+        );
         return;
     }
 
