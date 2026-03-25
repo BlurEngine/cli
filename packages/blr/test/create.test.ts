@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { DEFAULT_MINECRAFT_TARGET_VERSION } from "../src/constants.js";
 import { resolveLatestCreateMinecraftTargetVersion } from "../src/commands/create.js";
 import { exists, listDirectories } from "../src/fs.js";
@@ -14,9 +13,6 @@ import {
     readTextFile,
     runBuiltCli,
 } from "./helpers.js";
-
-const testDirectory = path.dirname(fileURLToPath(import.meta.url));
-const personalRoot = path.resolve(testDirectory, "..", "..", "..", "..");
 
 type PackageJsonShape = {
     dependencies?: Record<string, string>;
@@ -160,11 +156,10 @@ test("built cli create keeps a resource-only scaffold minimal", async (t) => {
 });
 
 test("built cli create uses published semver by default inside the workspace and only switches to file deps with --local-deps", async (t) => {
-    const workspace = await mkdtemp(
-        path.join(personalRoot, ".tmp-blr-create-local-"),
-    );
-    t.after(async () => {
-        await rm(workspace, { recursive: true, force: true });
+    const workspace = await createTempDirectory(t, "blr-create-local-");
+    await mkdir(path.join(workspace, "bebe"), { recursive: true });
+    await mkdir(path.join(workspace, "cli", "packages", "blr"), {
+        recursive: true,
     });
 
     const defaultResult = runBuiltCli(
