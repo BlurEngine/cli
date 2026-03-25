@@ -10,11 +10,17 @@ import {
     BLR_CONFIG_SCHEMA_PATH,
     CURRENT_PROJECT_VERSION,
     DEFAULT_BDS_WORLD_NAME,
+    DEFAULT_MINECRAFT_CHANNEL,
     DEFAULT_MINECRAFT_TARGET_VERSION,
     DEFAULT_MIN_ENGINE_VERSION,
     DEFAULT_PACK_VERSION,
     PACKAGE_MANAGER_VERSION_HINTS,
 } from "../constants.js";
+import {
+    fetchBedrockDownloadLinks,
+    resolveLatestBedrockVersionForChannel,
+    type FetchImplementation,
+} from "../bedrock-downloads.js";
 import {
     ensureDirectory,
     exists,
@@ -57,6 +63,7 @@ type CreateCommandOptions = {
     yes?: boolean;
     force?: boolean;
     install?: boolean;
+    localDeps?: boolean;
 };
 
 type CreateResolvedOptions = {
@@ -71,6 +78,7 @@ type CreateResolvedOptions = {
     language: Language;
     force: boolean;
     install: boolean;
+    localDeps: boolean;
 };
 
 type PackageJsonShape = {
@@ -93,6 +101,8 @@ function stripVersionRange(version: string): string {
 }
 
 const DEFAULT_CREATE_BEBE_ENABLED = false;
+const BLR_CREATE_SKIP_REMOTE_VERSION_LOOKUP =
+    "BLR_CREATE_SKIP_REMOTE_MINECRAFT_VERSION_LOOKUP";
 
 function renderMainFile(bebe: boolean): string {
     if (!bebe) {
@@ -304,6 +314,19 @@ async function resolveLocalDependencyOverrides(
             ),
         },
     };
+}
+
+export async function resolveLatestCreateMinecraftTargetVersion(
+    fetchImplementation: FetchImplementation = fetch,
+): Promise<string> {
+    const downloads = await fetchBedrockDownloadLinks(
+        undefined,
+        fetchImplementation,
+    );
+    return resolveLatestBedrockVersionForChannel(
+        downloads,
+        DEFAULT_MINECRAFT_CHANNEL,
+    );
 }
 
 function createBehaviorManifest(
@@ -632,6 +655,7 @@ async function resolveCreateOptions(
         language,
         force: Boolean(options.force),
         install,
+        localDeps: Boolean(options.localDeps),
     };
 }
 
@@ -639,6 +663,7 @@ async function scaffoldProjectFiles(
     projectRoot: string,
     options: CreateResolvedOptions,
     cliVersion: string,
+    minecraftTargetVersion: string,
 ): Promise<void> {
     const packageName = toPackageName(options.projectName);
     const packName = toPackName(options.projectName);
@@ -652,11 +677,20 @@ async function scaffoldProjectFiles(
         options.language,
         cliVersion,
     );
-    const localOverrides = await resolveLocalDependencyOverrides(projectRoot);
-    if (options.scripts && options.bebe) {
-        Object.assign(packageJson.dependencies, localOverrides.dependencies);
+    if (options.localDeps) {
+        const localOverrides =
+            await resolveLocalDependencyOverrides(projectRoot);
+        if (options.scripts && options.bebe) {
+            Object.assign(
+                packageJson.dependencies,
+                localOverrides.dependencies,
+            );
+        }
+        Object.assign(
+            packageJson.devDependencies,
+            localOverrides.devDependencies,
+        );
     }
-    Object.assign(packageJson.devDependencies, localOverrides.devDependencies);
 
     const behaviorPath = path.join(projectRoot, "behavior_packs", packName);
     const resourcePath = path.join(projectRoot, "resource_packs", packName);
@@ -666,8 +700,8 @@ async function scaffoldProjectFiles(
         projectVersion: CURRENT_PROJECT_VERSION,
         namespace: options.namespace,
         minecraft: {
-            channel: "stable",
-            targetVersion: DEFAULT_MINECRAFT_TARGET_VERSION,
+            channel: DEFAULT_MINECRAFT_CHANNEL,
+            targetVersion: minecraftTargetVersion,
         },
     };
 
@@ -762,6 +796,20 @@ export async function runCreateCommand(
     const resolved = await resolveCreateOptions(projectArg, options);
     const targetRoot = path.resolve(process.cwd(), resolved.projectDirectory);
     const cliVersion = await getCliPackageVersion();
+    let minecraftTargetVersion = DEFAULT_MINECRAFT_TARGET_VERSION;
+
+    if (process.env[BLR_CREATE_SKIP_REMOTE_VERSION_LOOKUP] !== "1") {
+        try {
+            minecraftTargetVersion =
+                await resolveLatestCreateMinecraftTargetVersion();
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            console.log(
+                `[create] Warning: could not resolve the latest stable Bedrock targetVersion (${message}). Falling back to ${DEFAULT_MINECRAFT_TARGET_VERSION}.`,
+            );
+        }
+    }
 
     if (await exists(targetRoot)) {
         const empty = await isDirectoryEmpty(targetRoot);
@@ -776,7 +824,12 @@ export async function runCreateCommand(
     }
 
     await ensureDirectory(targetRoot);
-    await scaffoldProjectFiles(targetRoot, resolved, cliVersion);
+    await scaffoldProjectFiles(
+        targetRoot,
+        resolved,
+        cliVersion,
+        minecraftTargetVersion,
+    );
 
     if (resolved.install) {
         console.log(

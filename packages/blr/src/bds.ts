@@ -737,6 +737,37 @@ export async function ensureBds(
     return state;
 }
 
+export async function prefetchBdsArchive(
+    projectRoot: string,
+    config: BlurProject,
+    machine: BlurMachineSettings,
+    options: {
+        worldName?: string;
+        debug?: DebugLogger;
+    } = {},
+): Promise<ResolvedBdsState> {
+    const state = resolveBdsRuntimeState(
+        projectRoot,
+        config,
+        machine,
+        options.worldName,
+    );
+    options.debug?.log("bds", "resolved BDS state for prefetch", state);
+    await ensureDirectory(state.cacheDirectory);
+    await ensureDirectory(path.dirname(state.serverDirectory));
+
+    if (await exists(state.executablePath)) {
+        options.debug?.log("bds", "skipping BDS archive prefetch", {
+            reason: "server already provisioned",
+            executablePath: state.executablePath,
+        });
+        return state;
+    }
+
+    await downloadIfMissing(state, options.debug);
+    return state;
+}
+
 export async function syncProjectToBds(
     projectRoot: string,
     config: BlurProject,

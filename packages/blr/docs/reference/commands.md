@@ -43,6 +43,7 @@ Flags:
 - `--force`: replace an existing non-empty target directory
 - `--install`: install dependencies after scaffolding
 - `--no-install`: skip dependency installation
+- `--local-deps`: opt into local `file:` dependencies for `@blurengine/cli` and `@blurengine/bebe` when generating inside a compatible BlurEngine workspace
 
 Prompt behavior:
 
@@ -58,6 +59,8 @@ Prompt behavior:
 - `@blurengine/bebe` is off by default right now
 - the language prompt only appears when scripting is enabled explicitly
 - prompts map directly to CLI flags so the command stays scriptable
+- generated `blr.config.json` uses the latest stable Bedrock dedicated-server version available from the Bedrock download service at scaffold time
+- if that lookup fails, `create` falls back to the built-in default targetVersion and still scaffolds successfully
 
 ## `blr dev`
 

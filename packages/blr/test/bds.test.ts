@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { ensureBds } from "../src/bds.js";
+import AdmZip from "adm-zip";
+import { ensureBds, prefetchBdsArchive } from "../src/bds.js";
 import { createTempDirectory } from "./helpers.js";
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -146,4 +147,76 @@ test("ensureBds applies server/bedrock_server.exe as a custom local-server overr
     );
     assert.equal(state.customExecutableInjected, true);
     assert.equal(state.customExecutableSourcePath, customExecutablePath);
+});
+
+test("prefetchBdsArchive downloads the archive without extracting the server", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-bds-prefetch-");
+    const version = "1.26.3.1";
+    const cacheZipPath = path.join(
+        projectRoot,
+        ".blr",
+        "cache",
+        "bds",
+        `bedrock-server-${version}-win.zip`,
+    );
+    const runtimeExecutablePath = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        version,
+        "server",
+        "bedrock_server.exe",
+    );
+
+    const archive = new AdmZip();
+    archive.addFile("bedrock_server.exe", Buffer.from("stock executable"));
+    archive.addFile(
+        "server.properties",
+        Buffer.from("level-name=Bedrock level\n"),
+    );
+
+    t.mock.method(
+        globalThis,
+        "fetch",
+        async () =>
+            new Response(new Uint8Array(archive.toBuffer()), {
+                status: 200,
+                headers: {
+                    "content-type": "application/zip",
+                },
+            }),
+    );
+
+    await prefetchBdsArchive(
+        projectRoot,
+        {
+            minecraft: {
+                channel: "stable",
+            },
+            dev: {
+                localServer: {
+                    worldName: "Bedrock level",
+                    worldSourcePath: "worlds/Bedrock level",
+                    defaultPermissionLevel: "member",
+                    gamemode: "survival",
+                    allowlist: [],
+                    operators: [],
+                },
+            },
+            world: {
+                backend: "local",
+            },
+        } as any,
+        {
+            localServer: {
+                bdsVersion: version,
+                platform: "win",
+                cacheDirectory: ".blr/cache/bds",
+                serverDirectory: `.blr/bds/${version}/server`,
+            },
+        } as any,
+    );
+
+    assert.equal(await pathExists(cacheZipPath), true);
+    assert.equal(await pathExists(runtimeExecutablePath), false);
 });

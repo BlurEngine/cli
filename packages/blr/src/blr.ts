@@ -88,6 +88,11 @@ async function main(): Promise<void> {
         .option("--force", "Replace existing non-empty target directory", false)
         .option("--install", "Install dependencies after scaffolding")
         .option("--no-install", "Skip dependency installation")
+        .option(
+            "--local-deps",
+            "Use local file: dependencies when the generated project sits inside a compatible BlurEngine workspace",
+            false,
+        )
         .action(
             async (
                 projectName: string | undefined,

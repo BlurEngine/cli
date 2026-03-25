@@ -70,6 +70,12 @@ Default generated content:
 - `minecraft.channel`
 - `minecraft.targetVersion`
 
+Default version note:
+
+- generated projects default `minecraft.channel` to `stable`
+- `minecraft.targetVersion` is resolved from the latest stable Bedrock dedicated-server version available during `blr create`
+- if that lookup fails, `blr create` falls back to its built-in default targetVersion instead of aborting scaffold generation
+
 Optional later additions may include:
 
 - `package.defaultTarget` when the project wants bare `blr package` to resolve to a specific target

@@ -4,6 +4,7 @@ import {
     BdsServerController,
     captureAllowlistFromBds,
     captureWorldSourceFromBds,
+    prefetchBdsArchive,
 } from "../bds.js";
 import {
     clearMinecraftTargetUpdatePromptSilence,
@@ -108,6 +109,12 @@ type DevInteractiveSelectionResult = {
 };
 type DevInteractiveHooks = {
     onLocalServerSelected?: () => Promise<DevInteractiveSelectionResult | void>;
+    onLocalServerConfirmed?: () => Promise<void>;
+};
+
+type TrackedTask<T> = {
+    promise: Promise<T>;
+    isSettled: () => boolean;
 };
 
 type PipelineMode = "start" | "reload" | "restart";
@@ -188,6 +195,84 @@ function logDevExit(message: string, isError = false): void {
     }
 
     console.log(`[dev] ${message}`);
+}
+
+function trackTask<T>(promise: Promise<T>): TrackedTask<T> {
+    let settled = false;
+    return {
+        promise: promise.finally(() => {
+            settled = true;
+        }),
+        isSettled: () => settled,
+    };
+}
+
+async function waitForTrackedTask<T>(
+    task: TrackedTask<T>,
+    message: string,
+): Promise<T> {
+    if (task.isSettled()) {
+        return task.promise;
+    }
+
+    if (!process.stdout.isTTY) {
+        console.log(`[dev] ${message}`);
+        return task.promise;
+    }
+
+    const frames = ["|", "/", "-", "\\"];
+    let frameIndex = 0;
+    const render = () => {
+        process.stdout.write(`\r[dev] ${message} ${frames[frameIndex]}`);
+    };
+
+    render();
+    const interval = setInterval(() => {
+        frameIndex = (frameIndex + 1) % frames.length;
+        render();
+    }, 100);
+
+    try {
+        const result = await task.promise;
+        clearInterval(interval);
+        process.stdout.write("\r");
+        process.stdout.clearLine?.(0);
+        process.stdout.cursorTo?.(0);
+        return result;
+    } catch (error) {
+        clearInterval(interval);
+        process.stdout.write("\r");
+        process.stdout.clearLine?.(0);
+        process.stdout.cursorTo?.(0);
+        throw error;
+    }
+}
+
+async function waitForPromiseIfSlow<T>(
+    promise: Promise<T>,
+    message: string,
+    delayMs = 250,
+): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const trackedPromise = promise.finally(() => {
+        if (timer) {
+            clearTimeout(timer);
+            timer = undefined;
+        }
+    });
+
+    const raceResult = await Promise.race([
+        trackedPromise.then(() => "done" as const),
+        new Promise<"slow">((resolve) => {
+            timer = setTimeout(() => resolve("slow"), delayMs);
+        }),
+    ]);
+
+    if (raceResult === "done") {
+        return trackedPromise;
+    }
+
+    return waitForTrackedTask(trackTask(trackedPromise), message);
 }
 
 function hasExplicitActionSelection(options: DevCommandOptions): boolean {
@@ -360,6 +445,8 @@ async function resolveDevOptions(
             exitMessage = localServerSelection.exitMessage;
             exitIsError = localServerSelection.exitIsError ?? false;
             continueMessage = localServerSelection.continueMessage;
+        } else {
+            await hooks?.onLocalServerConfirmed?.();
         }
     }
 
@@ -570,6 +657,25 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         process.cwd(),
     );
     const debug = createDebugLogger(resolveDebugEnabled(options.debug));
+    const selectedWorld = resolveSelectedWorld(config, options.world);
+    const resolveCurrentMachine = () =>
+        resolveMachineSettings(
+            projectRoot,
+            {
+                minecraftProduct: options.minecraftProduct as any,
+                minecraftDevelopmentPath: options.minecraftDevelopmentPath,
+                bdsVersion: options.bdsVersion,
+                bdsPlatform: options.bdsPlatform as any,
+                bdsCacheDirectory: options.bdsCacheDir,
+                bdsServerDirectory: options.bdsServerDir,
+            },
+            {
+                minecraftChannel: config.minecraft.channel,
+                bdsVersion: config.minecraft.targetVersion,
+            },
+        );
+    let machine: ReturnType<typeof resolveMachineSettings> | undefined;
+    let localServerPrefetchTask: TrackedTask<unknown> | undefined;
     const localDeployDefaults = resolvePackFeatureSelection(
         config.automation.localDeploy.copy,
     );
@@ -837,9 +943,19 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
 
                 return { keepLocalServer: true };
             },
+            onLocalServerConfirmed: async () => {
+                machine ??= resolveCurrentMachine();
+                localServerPrefetchTask ??= trackTask(
+                    prefetchBdsArchive(projectRoot, config, machine, {
+                        worldName: selectedWorld.worldName,
+                        debug,
+                    }),
+                );
+            },
         },
     );
-    const selectedWorld = resolveSelectedWorld(config, options.world);
+    const machineSettings = machine ?? resolveCurrentMachine();
+    machine = machineSettings;
     const scriptWatchPatterns = filterScriptWatchPatterns(
         config.dev.watch.paths,
         selectedWorld.worldSourcePath,
@@ -852,21 +968,6 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         normalizedWorldSourcePath.length > 0
             ? createWatchPlan([`${normalizedWorldSourcePath}/**/*`])
             : createWatchPlan([]);
-    const machine = resolveMachineSettings(
-        projectRoot,
-        {
-            minecraftProduct: options.minecraftProduct as any,
-            minecraftDevelopmentPath: options.minecraftDevelopmentPath,
-            bdsVersion: options.bdsVersion,
-            bdsPlatform: options.bdsPlatform as any,
-            bdsCacheDirectory: options.bdsCacheDir,
-            bdsServerDirectory: options.bdsServerDir,
-        },
-        {
-            minecraftChannel: config.minecraft.channel,
-            bdsVersion: config.minecraft.targetVersion,
-        },
-    );
     debug.log("dev", "resolved dev command", {
         projectRoot,
         selectedWorld,
@@ -914,15 +1015,16 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 minecraftChannel: config.minecraft.channel,
                 worldName: selectedWorld.worldName,
                 worldSourcePath: selectedWorld.worldSourcePath,
-                minecraftProduct: machine.localDeploy.minecraftProduct,
+                minecraftProduct: machineSettings.localDeploy.minecraftProduct,
                 minecraftDevelopmentPath:
-                    machine.localDeploy.minecraftDevelopmentPath.length > 0
-                        ? machine.localDeploy.minecraftDevelopmentPath
+                    machineSettings.localDeploy.minecraftDevelopmentPath
+                        .length > 0
+                        ? machineSettings.localDeploy.minecraftDevelopmentPath
                         : "(auto)",
-                bdsVersion: machine.localServer.bdsVersion,
-                bdsPlatform: machine.localServer.platform,
-                bdsCacheDir: machine.localServer.cacheDirectory,
-                bdsServerDir: machine.localServer.serverDirectory,
+                bdsVersion: machineSettings.localServer.bdsVersion,
+                bdsPlatform: machineSettings.localServer.platform,
+                bdsCacheDir: machineSettings.localServer.cacheDirectory,
+                bdsServerDir: machineSettings.localServer.serverDirectory,
                 restartOnWorldChange:
                     resolved.restartOnWorldChange ??
                     config.dev.localServer.restartOnWorldChange,
@@ -939,7 +1041,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     );
 
     const localServer = resolved.localServer
-        ? new BdsServerController(projectRoot, config, machine, {
+        ? new BdsServerController(projectRoot, config, machineSettings, {
               worldName: selectedWorld.worldName,
               restartOnWorldChange: resolved.restartOnWorldChange,
               copyPacks: {
@@ -1122,7 +1224,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             await runLocalDeploy(
                 projectRoot,
                 config,
-                machine,
+                machineSettings,
                 {
                     copy: {
                         behaviorPack: resolved.localDeployBehaviorPack,
@@ -1139,7 +1241,16 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         }
 
         if (localServer) {
-            await localServer.apply(mode);
+            if (localServerPrefetchTask) {
+                await waitForTrackedTask(
+                    localServerPrefetchTask,
+                    "Waiting for local-server Bedrock download...",
+                );
+            }
+            await waitForPromiseIfSlow(
+                localServer.apply(mode),
+                "Preparing local server...",
+            );
             console.log(
                 `[dev] local-server ${mode === "reload" ? "reloaded" : "synchronized"}.`,
             );
