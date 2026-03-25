@@ -28,6 +28,7 @@ npm run dev
 - [Command Reference](./docs/reference/commands.md)
 - [Config Reference](./docs/reference/config.md)
 - [Generated Project Reference](./docs/reference/generated-project.md)
+- [Changelog](./CHANGELOG.md)
 
 ## Development
 

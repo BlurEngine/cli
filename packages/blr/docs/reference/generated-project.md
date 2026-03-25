@@ -149,6 +149,9 @@ Project-owned raw Bedrock world source.
 Usage:
 
 - used as the project-owned source world for BDS bootstrap/reset
+- generated projects ignore `worlds/` by default so local world materialization does not get committed accidentally
+- this nudges teams toward `blr world pull`, `blr world capture`, and `blr world push` instead of treating raw world state as normal source-controlled content
+- projects that intentionally keep world sources in git can remove or narrow that ignore rule
 - if `watch-world` and `restartOnWorldChange` are enabled, changes here trigger a BDS restart/reset
 - if `watch-world` is enabled, `blr dev` captures the runtime BDS world back into this folder on shutdown
 - `blr world capture` can seed or refresh this folder from the current runtime BDS world
@@ -195,6 +198,7 @@ Generated defaults:
   - `node_modules/`
   - `dist/`
   - `.blr/`
+  - `worlds/`
   - `.env.local`
   - `.DS_Store`
 

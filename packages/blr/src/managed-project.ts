@@ -15,6 +15,7 @@ const MANAGED_GITIGNORE_LINES = [
     "node_modules/",
     "dist/",
     ".blr/",
+    "worlds/",
     ".tmp-*",
     ".env.local",
     ".DS_Store",

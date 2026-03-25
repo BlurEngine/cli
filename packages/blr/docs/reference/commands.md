@@ -324,6 +324,7 @@ Manages project world sources and optional remote world backends.
 Purpose:
 
 - keeps the project-owned world source under `worlds/<worldName>/`
+- generated projects ignore `worlds/` by default so local world state stays out of normal source control unless a project intentionally opts in
 - allows explicit pull/push against an S3-compatible backend
 - keeps remote locking separate from `dev`, so live development does not silently overwrite shared worlds
 
