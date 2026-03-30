@@ -42,6 +42,6 @@
     "@types/prompts": "^2.4.9",
     "prettier": "^3.6.2",
     "tsx": "^4.20.3",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.2"
   }
 }
