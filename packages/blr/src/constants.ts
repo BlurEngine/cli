@@ -45,7 +45,7 @@ export const BASELINE_DEPENDENCIES = {
 } as const;
 
 export const BASELINE_BEBE_DEPENDENCIES = {
-    "@blurengine/bebe": "^1.0.0",
+    "@blurengine/bebe": "^0.2.0",
 } as const;
 
 export const BASELINE_DEV_DEPENDENCIES = {} as const;

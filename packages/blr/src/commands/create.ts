@@ -100,7 +100,7 @@ function stripVersionRange(version: string): string {
     return version.replace(/^[~^]/, "");
 }
 
-const DEFAULT_CREATE_BEBE_ENABLED = false;
+const DEFAULT_CREATE_BEBE_ENABLED = true;
 const BLR_CREATE_SKIP_REMOTE_VERSION_LOOKUP =
     "BLR_CREATE_SKIP_REMOTE_MINECRAFT_VERSION_LOOKUP";
 

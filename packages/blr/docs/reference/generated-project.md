@@ -54,7 +54,7 @@ Feature note:
 
 - the generated dependency set depends on project features
 - `scripting` adds Bedrock script dependencies
-- `bebe` adds `@blurengine/bebe` only when that scaffold option is enabled
+- `bebe` adds `@blurengine/bebe` for the default scripting scaffold, unless that option is disabled explicitly
 - data-only pack projects keep `package.json` leaner
 
 ### `blr.config.json`
@@ -112,7 +112,7 @@ Notes:
 - generated when scripting is enabled
 - projects without scripting can add `src/main.ts` or `src/main.js` later and `blr` will detect it automatically
 - scripting is only offered when a behavior pack is present
-- when `bebe` is enabled, the generated entrypoint imports and initializes `@blurengine/bebe`
+- when `bebe` uses its default scripting scaffold, the generated entrypoint imports and initializes `@blurengine/bebe`
 - when `bebe` is disabled, the generated entrypoint stays minimal and does not depend on `@blurengine/bebe`
 
 Build note:

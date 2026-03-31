@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { DEFAULT_MINECRAFT_TARGET_VERSION } from "../src/constants.js";
+import {
+    BASELINE_BEBE_DEPENDENCIES,
+    DEFAULT_MINECRAFT_TARGET_VERSION,
+} from "../src/constants.js";
 import { resolveLatestCreateMinecraftTargetVersion } from "../src/commands/create.js";
 import { exists, listDirectories } from "../src/fs.js";
 import {
@@ -28,7 +31,7 @@ type BlurConfigShape = {
     };
 };
 
-test("built cli create scaffolds a scripting project with bebe disabled by default", async (t) => {
+test("built cli create scaffolds a scripting project with bebe enabled by default", async (t) => {
     const workspace = await createTempDirectory(t, "blr-create-");
     const result = runBuiltCli(
         [
@@ -66,9 +69,13 @@ test("built cli create scaffolds a scripting project with bebe disabled by defau
         path.join(projectRoot, "src", "main.ts"),
     );
 
-    assert.equal(packageJson.dependencies?.["@blurengine/bebe"], undefined);
+    assert.equal(
+        packageJson.dependencies?.["@blurengine/bebe"],
+        BASELINE_BEBE_DEPENDENCIES["@blurengine/bebe"],
+    );
     assert.ok(packageJson.devDependencies?.["@blurengine/cli"]);
-    assert.equal(mainFile, "export {};\n");
+    assert.match(mainFile, /import \{ Context \} from "@blurengine\/bebe";/);
+    assert.match(mainFile, /const ctx = new Context\(\);/);
     assert.equal(
         config.$schema,
         "./node_modules/@blurengine/cli/schema/blr.config.schema.json",
@@ -96,6 +103,45 @@ test("built cli create scaffolds a scripting project with bebe disabled by defau
     assert.match(readme, /npm run system/);
     assert.match(readme, /behavior_packs\//);
     assert.match(readme, /resource_packs\//);
+});
+
+test("built cli create can explicitly disable bebe while keeping scripting enabled", async (t) => {
+    const workspace = await createTempDirectory(t, "blr-create-");
+    const result = runBuiltCli(
+        [
+            "create",
+            "sample-project-no-bebe",
+            "--namespace",
+            "bc_df",
+            "--package-manager",
+            "npm",
+            "--behavior-pack",
+            "true",
+            "--resource-pack",
+            "true",
+            "--scripts",
+            "true",
+            "--bebe",
+            "false",
+            "--language",
+            "ts",
+            "--yes",
+            "--no-install",
+        ],
+        workspace,
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const projectRoot = path.join(workspace, "sample-project-no-bebe");
+    const packageJson = await readJsonFile<PackageJsonShape>(
+        path.join(projectRoot, "package.json"),
+    );
+    const mainFile = await readTextFile(
+        path.join(projectRoot, "src", "main.ts"),
+    );
+
+    assert.equal(packageJson.dependencies?.["@blurengine/bebe"], undefined);
+    assert.equal(mainFile, "export {};\n");
 });
 
 test("built cli create keeps a resource-only scaffold minimal", async (t) => {
@@ -200,6 +246,10 @@ test("built cli create uses published semver by default inside the workspace and
         String(defaultPackageJson.devDependencies?.["@blurengine/cli"]),
         /^file:/,
     );
+    assert.equal(
+        defaultPackageJson.dependencies?.["@blurengine/bebe"],
+        BASELINE_BEBE_DEPENDENCIES["@blurengine/bebe"],
+    );
 
     const localDepsResult = runBuiltCli(
         [
@@ -214,8 +264,6 @@ test("built cli create uses published semver by default inside the workspace and
             "--resource-pack",
             "true",
             "--scripts",
-            "true",
-            "--bebe",
             "true",
             "--language",
             "ts",

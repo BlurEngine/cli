@@ -80,7 +80,7 @@ async function main(): Promise<void> {
         )
         .option(
             "--bebe [enabled]",
-            "Generate or skip @blurengine/bebe scaffolding when scripting is enabled (default: false when omitted)",
+            "Generate or skip @blurengine/bebe scaffolding when scripting is enabled (default: true when omitted)",
             parseOptionalBoolean,
         )
         .option("--language <language>", "ts | js")

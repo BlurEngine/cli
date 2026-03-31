@@ -56,7 +56,7 @@ Prompt behavior:
 - at least one content pack must be selected
 - if advanced setup is selected and a behavior pack is present, `create` asks a follow-up checklist for scripting
 - if scripting is enabled, `create` asks whether to scaffold `@blurengine/bebe`
-- `@blurengine/bebe` is off by default right now
+- if scripting is enabled and no explicit `--bebe` value is provided, the scaffold includes `@blurengine/bebe`
 - the language prompt only appears when scripting is enabled explicitly
 - prompts map directly to CLI flags so the command stays scriptable
 - generated `blr.config.json` uses the latest stable Bedrock dedicated-server version available from the Bedrock download service at scaffold time
