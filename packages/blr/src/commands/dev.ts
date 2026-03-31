@@ -2,9 +2,12 @@ import chokidar, { type FSWatcher } from "chokidar";
 import picomatch from "picomatch";
 import {
     BdsServerController,
+    bootstrapProjectWorldSourceFromBds,
     captureAllowlistFromBds,
     captureWorldSourceFromBds,
     prefetchBdsArchive,
+    resolveBdsRuntimeState,
+    type BdsProvisionReporter,
 } from "../bds.js";
 import {
     clearMinecraftTargetUpdatePromptSilence,
@@ -27,11 +30,7 @@ import {
 import { runPrompt } from "../prompt.js";
 import { buildProject, runLocalDeploy } from "../runtime.js";
 import type { BlurConfigFile, BlurProject } from "../types.js";
-import {
-    appendWorldSourceHint,
-    assertValidProjectWorldSource,
-    resolveSelectedWorld,
-} from "../world.js";
+import { resolveSelectedWorld } from "../world.js";
 
 type DevCommandOptions = {
     localDeploy?: boolean;
@@ -115,6 +114,10 @@ type DevInteractiveHooks = {
 type TrackedTask<T> = {
     promise: Promise<T>;
     isSettled: () => boolean;
+};
+
+type WaitOptions = {
+    animate?: boolean;
 };
 
 type PipelineMode = "start" | "reload" | "restart";
@@ -210,12 +213,14 @@ function trackTask<T>(promise: Promise<T>): TrackedTask<T> {
 async function waitForTrackedTask<T>(
     task: TrackedTask<T>,
     message: string,
+    options: WaitOptions = {},
 ): Promise<T> {
     if (task.isSettled()) {
         return task.promise;
     }
 
-    if (!process.stdout.isTTY) {
+    const animate = options.animate ?? process.stdout.isTTY;
+    if (!process.stdout.isTTY || !animate) {
         console.log(`[dev] ${message}`);
         return task.promise;
     }
@@ -252,6 +257,7 @@ async function waitForPromiseIfSlow<T>(
     promise: Promise<T>,
     message: string,
     delayMs = 250,
+    options: WaitOptions = {},
 ): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
     const trackedPromise = promise.finally(() => {
@@ -272,7 +278,98 @@ async function waitForPromiseIfSlow<T>(
         return trackedPromise;
     }
 
-    return waitForTrackedTask(trackTask(trackedPromise), message);
+    return waitForTrackedTask(trackTask(trackedPromise), message, options);
+}
+
+function formatByteCount(bytes: number): string {
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
+
+    const units = ["KB", "MB", "GB", "TB"];
+    let value = bytes / 1024;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+
+    const decimals = value >= 10 ? 0 : 1;
+    return `${value.toFixed(decimals)} ${units[unitIndex]}`;
+}
+
+function createLocalServerProgressReporter(): BdsProvisionReporter {
+    let lastLoggedPercent = -10;
+    let lastLoggedBytes = 0;
+    let lastLoggedAt = 0;
+
+    return {
+        onDownloadStart(progress) {
+            const total =
+                typeof progress.totalBytes === "number"
+                    ? ` (${formatByteCount(progress.totalBytes)})`
+                    : "";
+            console.log(
+                `[dev] local-server downloading Bedrock ${progress.version}${total}...`,
+            );
+            lastLoggedPercent = -10;
+            lastLoggedBytes = 0;
+            lastLoggedAt = Date.now();
+        },
+        onDownloadProgress(progress) {
+            const now = Date.now();
+            if (
+                typeof progress.totalBytes === "number" &&
+                progress.totalBytes > 0
+            ) {
+                const percent = Math.floor(
+                    (progress.bytesReceived / progress.totalBytes) * 100,
+                );
+                if (
+                    percent < 100 &&
+                    percent < lastLoggedPercent + 10 &&
+                    now - lastLoggedAt < 4000
+                ) {
+                    return;
+                }
+
+                lastLoggedPercent = percent;
+                lastLoggedAt = now;
+                console.log(
+                    `[dev] local-server download ${Math.min(percent, 99)}% (${formatByteCount(progress.bytesReceived)} / ${formatByteCount(progress.totalBytes)})`,
+                );
+                return;
+            }
+
+            if (
+                progress.bytesReceived - lastLoggedBytes < 8 * 1024 * 1024 &&
+                now - lastLoggedAt < 4000
+            ) {
+                return;
+            }
+
+            lastLoggedBytes = progress.bytesReceived;
+            lastLoggedAt = now;
+            console.log(
+                `[dev] local-server downloaded ${formatByteCount(progress.bytesReceived)}...`,
+            );
+        },
+        onDownloadComplete(progress) {
+            console.log(
+                `[dev] local-server downloaded Bedrock ${progress.version} (${formatByteCount(progress.bytesReceived)}).`,
+            );
+        },
+        onExtractStart(progress) {
+            console.log(
+                `[dev] local-server extracting Bedrock ${progress.version}...`,
+            );
+        },
+        onExtractComplete(progress) {
+            console.log(
+                `[dev] local-server prepared Bedrock ${progress.version}.`,
+            );
+        },
+    };
 }
 
 function hasExplicitActionSelection(options: DevCommandOptions): boolean {
@@ -676,6 +773,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         );
     let machine: ReturnType<typeof resolveMachineSettings> | undefined;
     let localServerPrefetchTask: TrackedTask<unknown> | undefined;
+    const localServerProgressReporter = createLocalServerProgressReporter();
     const localDeployDefaults = resolvePackFeatureSelection(
         config.automation.localDeploy.copy,
     );
@@ -949,6 +1047,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                     prefetchBdsArchive(projectRoot, config, machine, {
                         worldName: selectedWorld.worldName,
                         debug,
+                        reporter: localServerProgressReporter,
                     }),
                 );
             },
@@ -983,22 +1082,6 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             resolved.exitIsError,
         );
         return;
-    }
-
-    if (resolved.localServer && resolved.watchWorld) {
-        try {
-            await assertValidProjectWorldSource(
-                projectRoot,
-                selectedWorld.worldSourcePath,
-                "watch world changes",
-            );
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : String(error);
-            throw new Error(
-                appendWorldSourceHint(config, selectedWorld.worldName, message),
-            );
-        }
     }
 
     console.log("[dev] Configuration:");
@@ -1053,8 +1136,31 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                   resourcePack: resolved.attachResourcePack,
               },
               debug,
+              reporter: localServerProgressReporter,
           })
         : undefined;
+
+    if (resolved.localServer && resolved.watchWorld) {
+        const runtimeState = resolveBdsRuntimeState(
+            projectRoot,
+            config,
+            machineSettings,
+            selectedWorld.worldName,
+        );
+        const bootstrapResult = await bootstrapProjectWorldSourceFromBds(
+            runtimeState,
+            debug,
+        );
+        if (bootstrapResult === "copied") {
+            console.log(
+                `[dev] local-server copied the existing runtime world into ${selectedWorld.worldSourcePath}.`,
+            );
+        } else if (bootstrapResult === "waiting-for-runtime") {
+            console.log(
+                `[dev] local-server has no existing runtime world to copy yet. ${selectedWorld.worldSourcePath} will sync after the runtime world is created.`,
+            );
+        }
+    }
 
     const watchers = new Set<FSWatcher>();
     let debounceHandle: NodeJS.Timeout | undefined;
@@ -1245,11 +1351,14 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 await waitForTrackedTask(
                     localServerPrefetchTask,
                     "Waiting for local-server Bedrock download...",
+                    { animate: false },
                 );
             }
             await waitForPromiseIfSlow(
                 localServer.apply(mode),
                 "Preparing local server...",
+                250,
+                { animate: false },
             );
             console.log(
                 `[dev] local-server ${mode === "reload" ? "reloaded" : "synchronized"}.`,

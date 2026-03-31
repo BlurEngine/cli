@@ -3,7 +3,11 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import AdmZip from "adm-zip";
-import { ensureBds, prefetchBdsArchive } from "../src/bds.js";
+import {
+    bootstrapProjectWorldSourceFromBds,
+    ensureBds,
+    prefetchBdsArchive,
+} from "../src/bds.js";
 import { createTempDirectory } from "./helpers.js";
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -219,4 +223,160 @@ test("prefetchBdsArchive downloads the archive without extracting the server", a
 
     assert.equal(await pathExists(cacheZipPath), true);
     assert.equal(await pathExists(runtimeExecutablePath), false);
+});
+
+test("prefetchBdsArchive reports download progress while fetching the archive", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-bds-progress-");
+    const version = "1.26.3.1";
+    const events: string[] = [];
+
+    const archive = new AdmZip();
+    archive.addFile("bedrock_server.exe", Buffer.from("stock executable"));
+    archive.addFile(
+        "server.properties",
+        Buffer.from("level-name=Bedrock level\n"),
+    );
+    const payload = new Uint8Array(archive.toBuffer());
+
+    t.mock.method(
+        globalThis,
+        "fetch",
+        async () =>
+            new Response(payload, {
+                status: 200,
+                headers: {
+                    "content-type": "application/zip",
+                    "content-length": String(payload.byteLength),
+                },
+            }),
+    );
+
+    await prefetchBdsArchive(
+        projectRoot,
+        {
+            minecraft: {
+                channel: "stable",
+            },
+            dev: {
+                localServer: {
+                    worldName: "Bedrock level",
+                    worldSourcePath: "worlds/Bedrock level",
+                    defaultPermissionLevel: "member",
+                    gamemode: "survival",
+                    allowlist: [],
+                    operators: [],
+                },
+            },
+            world: {
+                backend: "local",
+            },
+        } as any,
+        {
+            localServer: {
+                bdsVersion: version,
+                platform: "win",
+                cacheDirectory: ".blr/cache/bds",
+                serverDirectory: `.blr/bds/${version}/server`,
+            },
+        } as any,
+        {
+            reporter: {
+                onDownloadStart(progress) {
+                    events.push(`start:${progress.totalBytes ?? 0}`);
+                },
+                onDownloadProgress(progress) {
+                    events.push(`progress:${progress.bytesReceived}`);
+                },
+                onDownloadComplete(progress) {
+                    events.push(`complete:${progress.bytesReceived}`);
+                },
+            },
+        },
+    );
+
+    assert.equal(events[0], `start:${payload.byteLength}`);
+    assert.match(events[1] ?? "", /^progress:\d+$/);
+    assert.equal(events.at(-1), `complete:${payload.byteLength}`);
+});
+
+test("bootstrapProjectWorldSourceFromBds copies an existing runtime world into the project source when the source is missing", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-bds-bootstrap-copy-");
+    const runtimeWorldDirectory = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        "1.26.3.1",
+        "server",
+        "worlds",
+        "Bedrock level",
+    );
+    const worldSourceDirectory = path.join(
+        projectRoot,
+        "worlds",
+        "Bedrock level",
+    );
+
+    await mkdir(path.join(runtimeWorldDirectory, "db"), { recursive: true });
+    await writeFile(path.join(runtimeWorldDirectory, "levelname.txt"), "hello");
+
+    const result = await bootstrapProjectWorldSourceFromBds({
+        channel: "stable",
+        version: "1.26.3.1",
+        platform: "win",
+        cacheDirectory: path.join(projectRoot, ".blr", "cache", "bds"),
+        serverDirectory: path.join(projectRoot, ".blr", "bds", "1.26.3.1", "server"),
+        worldName: "Bedrock level",
+        worldSourcePath: "worlds/Bedrock level",
+        worldDirectory: runtimeWorldDirectory,
+        worldSourceDirectory,
+        executablePath: path.join(projectRoot, ".blr", "bds", "1.26.3.1", "server", "bedrock_server.exe"),
+        zipPath: path.join(projectRoot, ".blr", "cache", "bds", "bedrock-server-1.26.3.1-win.zip"),
+        customExecutableInjected: false,
+    });
+
+    assert.equal(result, "copied");
+    assert.equal(await pathExists(path.join(worldSourceDirectory, "db")), true);
+    assert.equal(
+        await readFile(path.join(worldSourceDirectory, "levelname.txt"), "utf8"),
+        "hello",
+    );
+});
+
+test("bootstrapProjectWorldSourceFromBds waits when neither a valid project source nor runtime world exists yet", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-bds-bootstrap-wait-");
+    const worldSourceDirectory = path.join(
+        projectRoot,
+        "worlds",
+        "Bedrock level",
+    );
+
+    await mkdir(worldSourceDirectory, { recursive: true });
+    await writeFile(path.join(worldSourceDirectory, ".gitkeep"), "");
+
+    const result = await bootstrapProjectWorldSourceFromBds({
+        channel: "stable",
+        version: "1.26.3.1",
+        platform: "win",
+        cacheDirectory: path.join(projectRoot, ".blr", "cache", "bds"),
+        serverDirectory: path.join(projectRoot, ".blr", "bds", "1.26.3.1", "server"),
+        worldName: "Bedrock level",
+        worldSourcePath: "worlds/Bedrock level",
+        worldDirectory: path.join(
+            projectRoot,
+            ".blr",
+            "bds",
+            "1.26.3.1",
+            "server",
+            "worlds",
+            "Bedrock level",
+        ),
+        worldSourceDirectory,
+        executablePath: path.join(projectRoot, ".blr", "bds", "1.26.3.1", "server", "bedrock_server.exe"),
+        zipPath: path.join(projectRoot, ".blr", "cache", "bds", "bedrock-server-1.26.3.1-win.zip"),
+        customExecutableInjected: false,
+    });
+
+    assert.equal(result, "waiting-for-runtime");
+    assert.equal(await pathExists(path.join(worldSourceDirectory, ".gitkeep")), true);
+    assert.equal(await pathExists(path.join(worldSourceDirectory, "db")), false);
 });

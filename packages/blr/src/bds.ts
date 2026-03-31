@@ -15,6 +15,7 @@ import {
     ensureDirectory,
     ensureParentDirectory,
     exists,
+    isDirectory,
     readJson,
     readText,
     removeDirectory,
@@ -70,6 +71,40 @@ export type ResolvedBdsState = {
     customExecutableSourcePath?: string;
     customExecutableInjected: boolean;
 };
+
+export type BdsDownloadProgress = {
+    version: string;
+    platform: BdsPlatform;
+    bytesReceived: number;
+    totalBytes?: number;
+};
+
+export type BdsProvisionReporter = {
+    onDownloadStart?: (progress: {
+        version: string;
+        platform: BdsPlatform;
+        totalBytes?: number;
+    }) => void;
+    onDownloadProgress?: (progress: BdsDownloadProgress) => void;
+    onDownloadComplete?: (progress: BdsDownloadProgress) => void;
+    onExtractStart?: (progress: {
+        version: string;
+        platform: BdsPlatform;
+        zipPath: string;
+        serverDirectory: string;
+    }) => void;
+    onExtractComplete?: (progress: {
+        version: string;
+        platform: BdsPlatform;
+        zipPath: string;
+        serverDirectory: string;
+    }) => void;
+};
+
+export type WorldSourceBootstrapResult =
+    | "ready"
+    | "copied"
+    | "waiting-for-runtime";
 
 function resolveBdsPlatform(
     platform: BlurMachineSettings["localServer"]["platform"],
@@ -168,9 +203,83 @@ async function applyCustomExecutableOverride(
     });
 }
 
+function parseContentLength(value: string | null): number | undefined {
+    if (!value) {
+        return undefined;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return undefined;
+    }
+    return parsed;
+}
+
+async function readArchiveResponse(
+    response: Response,
+    state: ResolvedBdsState,
+    reporter?: BdsProvisionReporter,
+): Promise<BdsDownloadProgress & { buffer: Buffer }> {
+    const totalBytes = parseContentLength(response.headers.get("content-length"));
+    reporter?.onDownloadStart?.({
+        version: state.version,
+        platform: state.platform,
+        totalBytes,
+    });
+
+    let bytesReceived = 0;
+    const emitProgress = () => {
+        reporter?.onDownloadProgress?.({
+            version: state.version,
+            platform: state.platform,
+            bytesReceived,
+            totalBytes,
+        });
+    };
+
+    if (!response.body) {
+        const buffer = Buffer.from(await response.arrayBuffer());
+        bytesReceived = buffer.byteLength;
+        emitProgress();
+        return {
+            version: state.version,
+            platform: state.platform,
+            bytesReceived,
+            totalBytes,
+            buffer,
+        };
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+            break;
+        }
+        if (!value || value.byteLength === 0) {
+            continue;
+        }
+
+        const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+        chunks.push(chunk);
+        bytesReceived += chunk.byteLength;
+        emitProgress();
+    }
+
+    return {
+        version: state.version,
+        platform: state.platform,
+        bytesReceived,
+        totalBytes,
+        buffer: Buffer.concat(chunks),
+    };
+}
+
 async function downloadIfMissing(
     state: ResolvedBdsState,
     debug?: DebugLogger,
+    reporter?: BdsProvisionReporter,
 ): Promise<void> {
     if (await exists(state.zipPath)) {
         try {
@@ -209,19 +318,25 @@ async function downloadIfMissing(
         );
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
+    const download = await readArchiveResponse(response, state, reporter);
     try {
-        const zip = new AdmZip(buffer);
+        const zip = new AdmZip(download.buffer);
         zip.getEntries();
     } catch {
         throw new Error(
             `Downloaded BDS ${state.version} from ${url}, but the response was not a valid ZIP archive. Verify minecraft.targetVersion and minecraft.channel.`,
         );
     }
-    await writeFile(state.zipPath, buffer);
+    await writeFile(state.zipPath, download.buffer);
+    reporter?.onDownloadComplete?.({
+        version: state.version,
+        platform: state.platform,
+        bytesReceived: download.bytesReceived,
+        totalBytes: download.totalBytes,
+    });
     debug?.log("bds", "downloaded BDS archive", {
         zipPath: state.zipPath,
-        bytes: buffer.byteLength,
+        bytes: download.bytesReceived,
     });
 }
 
@@ -387,6 +502,7 @@ async function extractIfMissing(
     config: BlurProject,
     state: ResolvedBdsState,
     debug?: DebugLogger,
+    reporter?: BdsProvisionReporter,
 ): Promise<void> {
     if (await exists(state.executablePath)) {
         debug?.log("bds", "reusing provisioned BDS server", {
@@ -412,7 +528,13 @@ async function extractIfMissing(
         return;
     }
 
-    await downloadIfMissing(state, debug);
+    await downloadIfMissing(state, debug, reporter);
+    reporter?.onExtractStart?.({
+        version: state.version,
+        platform: state.platform,
+        zipPath: state.zipPath,
+        serverDirectory: state.serverDirectory,
+    });
     const stagingDirectory = await mkdtemp(
         path.join(
             path.dirname(state.serverDirectory),
@@ -446,6 +568,12 @@ async function extractIfMissing(
         }
     }
     debug?.log("bds", "extracted BDS server", {
+        zipPath: state.zipPath,
+        serverDirectory: state.serverDirectory,
+    });
+    reporter?.onExtractComplete?.({
+        version: state.version,
+        platform: state.platform,
         zipPath: state.zipPath,
         serverDirectory: state.serverDirectory,
     });
@@ -715,6 +843,37 @@ export async function captureWorldSourceFromBds(
     });
 }
 
+export async function bootstrapProjectWorldSourceFromBds(
+    state: ResolvedBdsState,
+    debug?: DebugLogger,
+): Promise<WorldSourceBootstrapResult> {
+    const sourceDbDirectory = path.join(state.worldSourceDirectory, "db");
+    if (
+        (await isDirectory(state.worldSourceDirectory)) &&
+        (await isDirectory(sourceDbDirectory))
+    ) {
+        debug?.log("bds", "project world source already present", {
+            worldSourceDirectory: state.worldSourceDirectory,
+        });
+        return "ready";
+    }
+
+    const runtimeDbDirectory = path.join(state.worldDirectory, "db");
+    if (
+        !(await isDirectory(state.worldDirectory)) ||
+        !(await isDirectory(runtimeDbDirectory))
+    ) {
+        debug?.log("bds", "runtime world not available for initial source sync", {
+            worldDirectory: state.worldDirectory,
+            worldSourceDirectory: state.worldSourceDirectory,
+        });
+        return "waiting-for-runtime";
+    }
+
+    await captureWorldSourceFromBds(state, debug);
+    return "copied";
+}
+
 export async function ensureBds(
     projectRoot: string,
     config: BlurProject,
@@ -722,6 +881,7 @@ export async function ensureBds(
     options: {
         worldName?: string;
         debug?: DebugLogger;
+        reporter?: BdsProvisionReporter;
     } = {},
 ): Promise<ResolvedBdsState> {
     const state = resolveBdsRuntimeState(
@@ -733,7 +893,13 @@ export async function ensureBds(
     options.debug?.log("bds", "resolved BDS state", state);
     await ensureDirectory(state.cacheDirectory);
     await ensureDirectory(path.dirname(state.serverDirectory));
-    await extractIfMissing(projectRoot, config, state, options.debug);
+    await extractIfMissing(
+        projectRoot,
+        config,
+        state,
+        options.debug,
+        options.reporter,
+    );
     return state;
 }
 
@@ -744,6 +910,7 @@ export async function prefetchBdsArchive(
     options: {
         worldName?: string;
         debug?: DebugLogger;
+        reporter?: BdsProvisionReporter;
     } = {},
 ): Promise<ResolvedBdsState> {
     const state = resolveBdsRuntimeState(
@@ -764,7 +931,7 @@ export async function prefetchBdsArchive(
         return state;
     }
 
-    await downloadIfMissing(state, options.debug);
+    await downloadIfMissing(state, options.debug, options.reporter);
     return state;
 }
 
@@ -822,6 +989,7 @@ export class BdsServerController {
             copyPacks?: PackFeatureSelectionOverride;
             attachPacks?: PackFeatureSelectionOverride;
             debug?: DebugLogger;
+            reporter?: BdsProvisionReporter;
         } = {},
     ) {}
 
@@ -868,6 +1036,7 @@ export class BdsServerController {
             {
                 worldName: this.worldName,
                 debug: this.options.debug,
+                reporter: this.options.reporter,
             },
         );
         this.state = state;
