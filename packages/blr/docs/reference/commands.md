@@ -97,24 +97,28 @@ Pack automation defaults:
 
 Interactive behavior:
 
-- `dev` is interactive by default
+- `dev` now uses `blr.config.json` plus built-in CLI defaults to resolve the run automatically by default
+- use `-i` or `--interactive true` to force the interactive checklist
 - the first interactive page selects `local-deploy` and `local-server`
-- if `local-server` is selected and `minecraft.targetVersion` is behind the latest Bedrock dedicated-server version for the configured `minecraft.channel`, `dev` prompts before the watch page
-- that update prompt can:
+- if `local-server` is enabled and the effective BDS version for the run came from `blr.config.json`, `dev` can prompt before the watch page when it finds a newer dedicated-server version for the configured `minecraft.channel`
+- that prompt can:
   - update `blr.config.json -> minecraft.targetVersion` immediately
   - continue without changing the project
+  - continue without local server when the selected BDS version is not available on the configured channel
   - silence the prompt for 24 hours for that specific newer version
+- if the active local-server version came from CLI or environment overrides, `dev` does not show upgrade prompts for `minecraft.targetVersion`
+- when interactive mode is disabled, `dev` still shows necessary local-server version prompts when the active version comes from `blr.config.json`
 - the second interactive page selects watch/capture items
 - `watch-world` and `watch-allowlist` are only offered on the second page when `local-server` is selected
 - the third interactive page selects pack automation for this run when local deploy or local server are active
-- if any of `--local-deploy`, `--local-server`, pack automation flags, `--watch-scripts`, `--watch-world`, or `--watch-allowlist` is passed explicitly, interactive mode is skipped unless `--interactive true` is also passed
+- explicit CLI flags still override the config-driven defaults for that run, and `-i` can still force the checklist when those flags are present
 - pressing `Ctrl+C` during an interactive prompt aborts the command immediately
 - confirming with no selected items exits cleanly without doing any work
 - if no active dev targets are enabled, `dev` performs the initial build and exits even when `watch` would otherwise be `true`
 
 Flags:
 
-- `--interactive [enabled]`: enable or disable the checklist
+- `-i, --interactive [enabled]`: force or disable the checklist
 - `--local-deploy [enabled]`: enable or disable local deploy
 - `--local-deploy-behavior-pack [enabled]`: enable or disable behavior-pack deployment for this run
 - `--local-deploy-resource-pack [enabled]`: enable or disable resource-pack deployment for this run
@@ -142,12 +146,13 @@ Examples:
 
 ```text
 blr dev
-blr dev --interactive false --watch false
-blr dev --interactive false --watch-scripts true --local-server false
-blr dev --interactive false --local-server true --watch-world true
-blr dev --interactive false --local-server true --watch-allowlist true
-blr dev --interactive false --local-server true --bds-version 1.26.0.2
-blr dev --interactive false --local-server true --world "Creative Sandbox"
+blr dev -i
+blr dev --watch false
+blr dev --watch-scripts true --local-server false
+blr dev --local-server true --watch-world true
+blr dev --local-server true --watch-allowlist true
+blr dev --local-server true --bds-version 1.26.0.2
+blr dev --local-server true --world "Creative Sandbox"
 blr dev --local-deploy true --minecraft-product Custom --minecraft-development-path D:/com.mojang
 blr dev --debug
 ```
@@ -253,7 +258,7 @@ Updates `blr.config.json -> minecraft.targetVersion` to the latest Bedrock dedic
 Behavior:
 
 - shows the same status summary as `minecraft check`
-- prompts for confirmation by default
+- prompts for confirmation by default, naming the current configured version before the target version it plans to apply
 - can update even when the configured version is not outdated but no longer resolves on the configured channel
 
 Flags:

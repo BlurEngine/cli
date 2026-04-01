@@ -84,7 +84,7 @@ export async function runMinecraftUpdateCommand(
         const answers = await runPrompt({
             type: "confirm",
             name: "confirm",
-            message: `Update minecraft.targetVersion to ${status.latestVersion}?`,
+            message: `Current: ${status.configuredVersion}\nNext: ${status.latestVersion}\nUpdate targetVersion?`,
             initial: true,
         });
         if (!answers.confirm) {

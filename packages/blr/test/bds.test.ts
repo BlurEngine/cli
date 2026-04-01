@@ -22,7 +22,14 @@ async function pathExists(targetPath: string): Promise<boolean> {
 test("ensureBds does not leave a versioned server directory behind after an invalid archive response", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-bds-invalid-");
     const version = "9.9.9.9";
-    const serverDirectory = path.join(projectRoot, ".blr", "bds", version);
+    const serverDirectory = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        version,
+        "server",
+    );
+    const serverRootDirectory = path.join(projectRoot, ".blr", "bds", version);
     const cacheZipPath = path.join(
         projectRoot,
         ".blr",
@@ -69,7 +76,7 @@ test("ensureBds does not leave a versioned server directory behind after an inva
                     bdsVersion: version,
                     platform: "win",
                     cacheDirectory: ".blr/cache/bds",
-                    serverDirectory: `.blr/bds/${version}`,
+                    serverDirectory: `.blr/bds/${version}/server`,
                 },
             } as any,
         ),
@@ -77,6 +84,62 @@ test("ensureBds does not leave a versioned server directory behind after an inva
     );
 
     assert.equal(await pathExists(serverDirectory), false);
+    assert.equal(await pathExists(serverRootDirectory), false);
+    assert.equal(await pathExists(cacheZipPath), false);
+});
+
+test("prefetchBdsArchive does not leave a versioned server directory behind after a 404 response", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-bds-prefetch-404-");
+    const version = "9.9.9.9";
+    const serverRootDirectory = path.join(projectRoot, ".blr", "bds", version);
+    const cacheZipPath = path.join(
+        projectRoot,
+        ".blr",
+        "cache",
+        "bds",
+        `bedrock-server-${version}-win.zip`,
+    );
+
+    t.mock.method(
+        globalThis,
+        "fetch",
+        async () => new Response(null, { status: 404 }),
+    );
+
+    await assert.rejects(
+        prefetchBdsArchive(
+            projectRoot,
+            {
+                minecraft: {
+                    channel: "stable",
+                },
+                dev: {
+                    localServer: {
+                        worldName: "Bedrock level",
+                        worldSourcePath: "worlds/Bedrock level",
+                        defaultPermissionLevel: "member",
+                        gamemode: "survival",
+                        allowlist: [],
+                        operators: [],
+                    },
+                },
+                world: {
+                    backend: "local",
+                },
+            } as any,
+            {
+                localServer: {
+                    bdsVersion: version,
+                    platform: "win",
+                    cacheDirectory: ".blr/cache/bds",
+                    serverDirectory: `.blr/bds/${version}/server`,
+                },
+            } as any,
+        ),
+        /Failed to download BDS 9\.9\.9\.9 .* \(404\)\./i,
+    );
+
+    assert.equal(await pathExists(serverRootDirectory), false);
     assert.equal(await pathExists(cacheZipPath), false);
 });
 
@@ -324,20 +387,42 @@ test("bootstrapProjectWorldSourceFromBds copies an existing runtime world into t
         version: "1.26.3.1",
         platform: "win",
         cacheDirectory: path.join(projectRoot, ".blr", "cache", "bds"),
-        serverDirectory: path.join(projectRoot, ".blr", "bds", "1.26.3.1", "server"),
+        serverDirectory: path.join(
+            projectRoot,
+            ".blr",
+            "bds",
+            "1.26.3.1",
+            "server",
+        ),
         worldName: "Bedrock level",
         worldSourcePath: "worlds/Bedrock level",
         worldDirectory: runtimeWorldDirectory,
         worldSourceDirectory,
-        executablePath: path.join(projectRoot, ".blr", "bds", "1.26.3.1", "server", "bedrock_server.exe"),
-        zipPath: path.join(projectRoot, ".blr", "cache", "bds", "bedrock-server-1.26.3.1-win.zip"),
+        executablePath: path.join(
+            projectRoot,
+            ".blr",
+            "bds",
+            "1.26.3.1",
+            "server",
+            "bedrock_server.exe",
+        ),
+        zipPath: path.join(
+            projectRoot,
+            ".blr",
+            "cache",
+            "bds",
+            "bedrock-server-1.26.3.1-win.zip",
+        ),
         customExecutableInjected: false,
     });
 
     assert.equal(result, "copied");
     assert.equal(await pathExists(path.join(worldSourceDirectory, "db")), true);
     assert.equal(
-        await readFile(path.join(worldSourceDirectory, "levelname.txt"), "utf8"),
+        await readFile(
+            path.join(worldSourceDirectory, "levelname.txt"),
+            "utf8",
+        ),
         "hello",
     );
 });
@@ -358,7 +443,13 @@ test("bootstrapProjectWorldSourceFromBds waits when neither a valid project sour
         version: "1.26.3.1",
         platform: "win",
         cacheDirectory: path.join(projectRoot, ".blr", "cache", "bds"),
-        serverDirectory: path.join(projectRoot, ".blr", "bds", "1.26.3.1", "server"),
+        serverDirectory: path.join(
+            projectRoot,
+            ".blr",
+            "bds",
+            "1.26.3.1",
+            "server",
+        ),
         worldName: "Bedrock level",
         worldSourcePath: "worlds/Bedrock level",
         worldDirectory: path.join(
@@ -371,12 +462,31 @@ test("bootstrapProjectWorldSourceFromBds waits when neither a valid project sour
             "Bedrock level",
         ),
         worldSourceDirectory,
-        executablePath: path.join(projectRoot, ".blr", "bds", "1.26.3.1", "server", "bedrock_server.exe"),
-        zipPath: path.join(projectRoot, ".blr", "cache", "bds", "bedrock-server-1.26.3.1-win.zip"),
+        executablePath: path.join(
+            projectRoot,
+            ".blr",
+            "bds",
+            "1.26.3.1",
+            "server",
+            "bedrock_server.exe",
+        ),
+        zipPath: path.join(
+            projectRoot,
+            ".blr",
+            "cache",
+            "bds",
+            "bedrock-server-1.26.3.1-win.zip",
+        ),
         customExecutableInjected: false,
     });
 
     assert.equal(result, "waiting-for-runtime");
-    assert.equal(await pathExists(path.join(worldSourceDirectory, ".gitkeep")), true);
-    assert.equal(await pathExists(path.join(worldSourceDirectory, "db")), false);
+    assert.equal(
+        await pathExists(path.join(worldSourceDirectory, ".gitkeep")),
+        true,
+    );
+    assert.equal(
+        await pathExists(path.join(worldSourceDirectory, "db")),
+        false,
+    );
 });

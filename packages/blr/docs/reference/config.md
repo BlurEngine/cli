@@ -106,14 +106,15 @@ Fields:
 Behavior:
 
 - drives the project target version that `blr` uses for:
-  - staged pack manifest `min_engine_version`
   - packaged world-template `base_game_version`
   - default BDS version when no CLI or machine-local env override is provided
 - drives the project Bedrock release channel across:
   - BDS stable vs preview download resolution
   - interactive `blr dev` update prompting
   - local-deploy auto-detection preference order when the deploy product is still `auto`
-- during interactive `blr dev` runs that select `local-server`, `blr` can prompt to update this field when the official Bedrock download-links service reports a newer dedicated-server version for the configured channel
+- pack manifests keep their authored `header.min_engine_version`; `blr build` and `blr dev` do not rewrite that field during staging
+- during interactive `blr dev` runs that select `local-server`, `blr` can prompt to update this field when the active local-server version came from `blr.config.json`
+- CLI- or environment-sourced version overrides do not trigger `dev` upgrade prompts for `minecraft.targetVersion`
 - `blr minecraft check` and `blr minecraft update` provide the same version workflow without starting `dev`
 - must be a valid `major.minor.patch` or `major.minor.patch.build` Minecraft version
 
@@ -290,6 +291,7 @@ Defaults if omitted:
 
 Notes:
 
+- `blr dev` uses these values directly during its default config-driven mode
 - these settings control pack deployment only
 - they do not affect whether the `local-deploy` action itself is selected
 - per-run CLI overrides:
@@ -330,6 +332,7 @@ Defaults if omitted:
 
 Notes:
 
+- `blr dev` uses these values directly during its default config-driven mode
 - `blr create` does not generate an empty world placeholder
 - world-aware commands such as `watch-world` and `package world-template` require that path to contain a real Bedrock world with a `db/` directory
 - `blr dev --world <worldName>` and `blr package --world <worldName>` can override the configured active world for a single run

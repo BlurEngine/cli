@@ -468,7 +468,7 @@ async function resolveCreateOptions(
             const answers = await runPrompt({
                 type: "multiselect",
                 name: "features",
-                message: "Enable project features",
+                message: "Choose project features",
                 choices: [
                     {
                         title: "Behavior pack",
@@ -518,7 +518,7 @@ async function resolveCreateOptions(
         const scriptAnswers = await runPrompt({
             type: "multiselect",
             name: "features",
-            message: "Enable advanced features",
+            message: "Choose advanced features",
             choices: [
                 {
                     title: "Scripting",
@@ -568,7 +568,7 @@ async function resolveCreateOptions(
         const answers = await runPrompt({
             type: "confirm",
             name: "bebe",
-            message: "Use @blurengine/bebe runtime helpers?",
+            message: "Use @blurengine/bebe helpers?",
             initial: DEFAULT_CREATE_BEBE_ENABLED,
         });
         bebe = Boolean(answers.bebe ?? DEFAULT_CREATE_BEBE_ENABLED);
@@ -614,7 +614,7 @@ async function resolveCreateOptions(
         const answers = await runPrompt({
             type: "confirm",
             name: "install",
-            message: "Install dependencies after scaffolding?",
+            message: "Install dependencies?",
             initial: true,
         });
         install = Boolean(answers.install ?? true);

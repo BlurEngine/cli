@@ -104,10 +104,12 @@ async function main(): Promise<void> {
 
     program
         .command("dev")
-        .description("Run the interactive or one-shot development workflow.")
+        .description(
+            "Run the config-driven or interactive development workflow.",
+        )
         .option(
-            "--interactive [enabled]",
-            "Enable or disable interactive checklist (default: true when omitted)",
+            "-i, --interactive [enabled]",
+            "Force or disable the interactive checklist (default: false when omitted)",
             parseOptionalBoolean,
         )
         .option(

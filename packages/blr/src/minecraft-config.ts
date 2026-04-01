@@ -1,6 +1,15 @@
+import {
+    applyBlurConfigEnvironmentOverrides,
+    configPathToEnvName,
+} from "./config-env.js";
 import { readJson, writeJson } from "./fs.js";
 import type { BlurConfigFile, BlurProject } from "./types.js";
 import { parseMinecraftVersion } from "./utils.js";
+
+export type ConfiguredMinecraftTargetVersionSource =
+    | "config-file"
+    | "config-env"
+    | "default";
 
 function ensureMutableRecord(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -25,13 +34,34 @@ export async function readConfiguredMinecraftTargetVersion(
     fallbackVersion: string,
 ): Promise<string> {
     const rawConfig = ensureMutableRecord(await readJson<unknown>(configPath));
-    const minecraftConfig = ensureMutableRecord(rawConfig.minecraft);
+    const overriddenConfig = ensureMutableRecord(
+        applyBlurConfigEnvironmentOverrides(rawConfig),
+    );
+    const minecraftConfig = ensureMutableRecord(overriddenConfig.minecraft);
     const configuredTargetVersion =
         typeof minecraftConfig.targetVersion === "string"
             ? minecraftConfig.targetVersion.trim()
             : "";
     const parsed = parseMinecraftVersion(configuredTargetVersion);
     return parsed?.normalized ?? fallbackVersion;
+}
+
+export async function resolveConfiguredMinecraftTargetVersionSource(
+    configPath: string,
+): Promise<ConfiguredMinecraftTargetVersionSource> {
+    const envName = configPathToEnvName(["minecraft", "targetVersion"]);
+    const envValue = process.env[envName]?.trim();
+    if (envValue && envValue.length > 0) {
+        return "config-env";
+    }
+
+    const rawConfig = ensureMutableRecord(await readJson<unknown>(configPath));
+    const minecraftConfig = ensureMutableRecord(rawConfig.minecraft);
+    const configuredTargetVersion =
+        typeof minecraftConfig.targetVersion === "string"
+            ? minecraftConfig.targetVersion.trim()
+            : "";
+    return configuredTargetVersion.length > 0 ? "config-file" : "default";
 }
 
 export function applyMinecraftTargetVersion(
@@ -47,10 +77,4 @@ export function applyMinecraftTargetVersion(
 
     config.minecraft.targetVersion = parsed.normalized;
     config.minecraft.minEngineVersion = [...parsed.minEngineVersion];
-    if (config.packs.behavior) {
-        config.packs.behavior.minEngineVersion = [...parsed.minEngineVersion];
-    }
-    if (config.packs.resource) {
-        config.packs.resource.minEngineVersion = [...parsed.minEngineVersion];
-    }
 }

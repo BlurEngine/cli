@@ -602,13 +602,11 @@ export async function loadBlurConfig(
             behavior: behavior
                 ? {
                       ...behavior,
-                      minEngineVersion: minecraftVersion.minEngineVersion,
                   }
                 : undefined,
             resource: resource
                 ? {
                       ...resource,
-                      minEngineVersion: minecraftVersion.minEngineVersion,
                   }
                 : undefined,
         },

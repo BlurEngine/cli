@@ -18,9 +18,10 @@ import { resolvePackFeatureSelection } from "../content.js";
 import { loadBlurConfig } from "../config.js";
 import { createDebugLogger, resolveDebugEnabled } from "../debug.js";
 import { resolveMachineSettings } from "../environment.js";
+import { BLR_ENV_BDS_VERSION } from "../constants.js";
 import {
     applyMinecraftTargetVersion,
-    readConfiguredMinecraftTargetVersion,
+    resolveConfiguredMinecraftTargetVersionSource,
     writeMinecraftTargetVersion,
 } from "../minecraft-config.js";
 import {
@@ -29,7 +30,7 @@ import {
 } from "../minecraft-version.js";
 import { runPrompt } from "../prompt.js";
 import { buildProject, runLocalDeploy } from "../runtime.js";
-import type { BlurConfigFile, BlurProject } from "../types.js";
+import type { BlurProject } from "../types.js";
 import { resolveSelectedWorld } from "../world.js";
 
 type DevCommandOptions = {
@@ -100,6 +101,12 @@ type DevDefaultSelections = {
 };
 
 type MinecraftTargetUpdateChoice = "update" | "continue" | "silence";
+export type DevLocalServerVersionSource =
+    | "cli-bds-version"
+    | "machine-env-bds-version"
+    | "config-env-target-version"
+    | "config-file-target-version"
+    | "default-target-version";
 type DevInteractiveSelectionResult = {
     keepLocalServer: boolean;
     exitMessage?: string;
@@ -185,6 +192,76 @@ function resolveFlag(
 ): boolean {
     if (typeof explicit === "boolean") return explicit;
     return fallback;
+}
+
+export function shouldUseInteractiveDevConfiguration(
+    options: Pick<DevCommandOptions, "interactive">,
+): boolean {
+    return options.interactive ?? false;
+}
+
+export async function resolveDevLocalServerVersionSource(
+    configPath: string,
+    options: Pick<DevCommandOptions, "bdsVersion">,
+): Promise<DevLocalServerVersionSource> {
+    const explicitBdsVersion =
+        typeof options.bdsVersion === "string" ? options.bdsVersion.trim() : "";
+    if (explicitBdsVersion.length > 0) {
+        return "cli-bds-version";
+    }
+
+    const machineEnvBdsVersion = process.env[BLR_ENV_BDS_VERSION]?.trim();
+    if (machineEnvBdsVersion && machineEnvBdsVersion.length > 0) {
+        return "machine-env-bds-version";
+    }
+
+    const configuredTargetVersionSource =
+        await resolveConfiguredMinecraftTargetVersionSource(configPath);
+    switch (configuredTargetVersionSource) {
+        case "config-env":
+            return "config-env-target-version";
+        case "config-file":
+            return "config-file-target-version";
+        default:
+            return "default-target-version";
+    }
+}
+
+function buildUnavailableLocalServerVersionPromptMessage(options: {
+    effectiveBdsVersion: string;
+    channel: BlurProject["minecraft"]["channel"];
+    latestVersion: string;
+    looksLikeChannelMismatch: boolean;
+    oppositeChannel?: string;
+    canPromptForUpgrade: boolean;
+}): string {
+    const channelLabel = options.channel === "preview" ? "preview" : "stable";
+    return [
+        `Current: ${options.effectiveBdsVersion}`,
+        options.looksLikeChannelMismatch
+            ? `Status: looks like ${options.oppositeChannel}, not ${options.channel}`
+            : `Status: not available on ${options.channel}`,
+        `Latest ${channelLabel}: ${options.latestVersion}`,
+        !options.canPromptForUpgrade
+            ? "Change it in config, env, or flags if needed."
+            : undefined,
+        "Choose an action:",
+    ]
+        .filter((line): line is string => typeof line === "string")
+        .join("\n");
+}
+
+function buildOutdatedLocalServerVersionPromptMessage(options: {
+    effectiveBdsVersion: string;
+    channel: BlurProject["minecraft"]["channel"];
+    latestVersion: string;
+}): string {
+    const channelLabel = options.channel === "preview" ? "preview" : "stable";
+    return [
+        `Current: ${options.effectiveBdsVersion}`,
+        `Latest ${channelLabel}: ${options.latestVersion}`,
+        "Choose an action:",
+    ].join("\n");
 }
 
 function logDevExit(message: string, isError = false): void {
@@ -372,22 +449,6 @@ function createLocalServerProgressReporter(): BdsProvisionReporter {
     };
 }
 
-function hasExplicitActionSelection(options: DevCommandOptions): boolean {
-    return (
-        typeof options.localDeploy === "boolean" ||
-        typeof options.localDeployBehaviorPack === "boolean" ||
-        typeof options.localDeployResourcePack === "boolean" ||
-        typeof options.localServer === "boolean" ||
-        typeof options.localServerBehaviorPack === "boolean" ||
-        typeof options.localServerResourcePack === "boolean" ||
-        typeof options.attachBehaviorPack === "boolean" ||
-        typeof options.attachResourcePack === "boolean" ||
-        typeof options.watchScripts === "boolean" ||
-        typeof options.watchWorld === "boolean" ||
-        typeof options.watchAllowlist === "boolean"
-    );
-}
-
 function hasActiveDevTargets(options: DevResolvedOptions): boolean {
     return options.localDeploy || options.localServer || options.watchScripts;
 }
@@ -501,16 +562,43 @@ async function resolveDevOptions(
     features: BlurProject["features"],
     hooks?: DevInteractiveHooks,
 ): Promise<DevResolvedOptions> {
-    const interactive =
-        options.interactive ?? !hasExplicitActionSelection(options);
+    const interactive = shouldUseInteractiveDevConfiguration(options);
     if (!interactive) {
-        return resolveNonInteractiveOptions(options, defaults);
+        const resolved = resolveNonInteractiveOptions(options, defaults);
+        if (!resolved.localServer) {
+            return resolved;
+        }
+
+        const localServerSelection = await hooks?.onLocalServerSelected?.();
+        if (localServerSelection?.continueMessage) {
+            logDevExit(localServerSelection.continueMessage);
+        }
+
+        if (localServerSelection?.keepLocalServer === false) {
+            return {
+                ...resolved,
+                localServer: false,
+                localServerBehaviorPack: false,
+                localServerResourcePack: false,
+                attachBehaviorPack: false,
+                attachResourcePack: false,
+                watchWorld: false,
+                watchAllowlist: false,
+                selectedAnyAction:
+                    resolved.localDeploy || resolved.watchScripts,
+                exitMessage: localServerSelection.exitMessage,
+                exitIsError: localServerSelection.exitIsError ?? false,
+            };
+        }
+
+        await hooks?.onLocalServerConfirmed?.();
+        return resolved;
     }
 
     const actionAnswers = await runPrompt({
         type: "multiselect",
         name: "checks",
-        message: "Enable dev actions",
+        message: "Choose dev actions",
         choices: [
             {
                 title: "Local deploy",
@@ -625,7 +713,7 @@ async function resolveDevOptions(
         const watchAnswers = await runPrompt({
             type: "multiselect",
             name: "checks",
-            message: "Enable watch and capture items",
+            message: "Choose watch items",
             choices: watchChoices,
             hint: "- Space to select. Enter to confirm.",
             instructions: false,
@@ -689,7 +777,7 @@ async function resolveDevOptions(
         const packAnswers = await runPrompt({
             type: "multiselect",
             name: "checks",
-            message: "Enable pack automation for this run",
+            message: "Choose pack actions",
             choices: packChoices,
             hint: "- Space to select. Enter to confirm.",
             instructions: false,
@@ -801,11 +889,14 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         config.features,
         {
             onLocalServerSelected: async () => {
-                const configuredTargetVersion =
-                    await readConfiguredMinecraftTargetVersion(
-                        configPath,
-                        config.minecraft.targetVersion,
-                    );
+                machine ??= resolveCurrentMachine();
+                const effectiveBdsVersion = machine.localServer.bdsVersion;
+                const versionSource = await resolveDevLocalServerVersionSource(
+                    configPath,
+                    options,
+                );
+                const canPromptForUpgrade =
+                    versionSource === "config-file-target-version";
                 let status: Awaited<
                     ReturnType<typeof resolveMinecraftVersionStatus>
                 >;
@@ -815,28 +906,28 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
 
                 try {
                     console.log(
-                        "[dev] Checking local-server Bedrock targetVersion...",
+                        "[dev] Checking local-server Bedrock version...",
                     );
                     artifactStatus = await resolveMinecraftArtifactStatus(
                         config.minecraft.channel,
-                        configuredTargetVersion,
+                        effectiveBdsVersion,
                         debug,
                     );
                     if (!artifactStatus.artifactAvailable) {
                         if (artifactStatus.looksLikeChannelMismatch) {
                             console.log(
-                                `[dev] Warning: minecraft.channel is ${config.minecraft.channel}, but targetVersion ${configuredTargetVersion} only appears to resolve on ${artifactStatus.oppositeChannel}.`,
+                                `[dev] Warning: minecraft.channel is ${config.minecraft.channel}, but local-server BDS version ${effectiveBdsVersion} only appears to resolve on ${artifactStatus.oppositeChannel}.`,
                             );
                         } else {
                             console.log(
-                                `[dev] Warning: minecraft.targetVersion ${configuredTargetVersion} could not be resolved on the ${config.minecraft.channel} Bedrock dedicated-server channel.`,
+                                `[dev] Warning: local-server BDS version ${effectiveBdsVersion} could not be resolved on the ${config.minecraft.channel} Bedrock dedicated-server channel.`,
                             );
                         }
                     }
 
                     status = await resolveMinecraftVersionStatus(
                         config.minecraft.channel,
-                        configuredTargetVersion,
+                        effectiveBdsVersion,
                         debug,
                         fetch,
                         artifactStatus,
@@ -852,7 +943,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                         },
                     );
                     console.log(
-                        `[dev] Warning: could not verify minecraft.targetVersion before starting local server (${message}). Continuing with the configured version.`,
+                        `[dev] Warning: could not verify the local-server BDS version before starting local server (${message}). Continuing with the selected version.`,
                     );
                     return { keepLocalServer: true };
                 }
@@ -870,44 +961,59 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                             "invalid target-version prompt is currently silenced",
                             {
                                 channel: config.minecraft.channel,
-                                configuredVersion: configuredTargetVersion,
+                                configuredVersion: effectiveBdsVersion,
                                 latestChannelVersion: status.latestVersion,
                             },
                         );
                         return {
                             keepLocalServer: false,
-                            exitMessage: `Local server was disabled because minecraft.targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel.`,
+                            exitMessage: `Local server was disabled because BDS version ${effectiveBdsVersion} is not available on the ${config.minecraft.channel} channel.`,
                             exitIsError: true,
-                            continueMessage: `Continuing without local server because minecraft.targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel.`,
+                            continueMessage: `Continuing without local server because BDS version ${effectiveBdsVersion} is not available on the ${config.minecraft.channel} channel.`,
                         };
                     }
 
-                    const promptMessage = [
-                        status.looksLikeChannelMismatch
-                            ? `targetVersion ${configuredTargetVersion} appears to belong to the ${status.oppositeChannel} channel, so the local server cannot start on ${config.minecraft.channel}.`
-                            : `targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel, so the local server cannot start with this version.`,
-                        `The latest ${config.minecraft.channel} version is ${status.latestVersion}.`,
-                        "How would you like to continue?",
-                    ].join("\n");
+                    const promptMessage =
+                        buildUnavailableLocalServerVersionPromptMessage({
+                            effectiveBdsVersion,
+                            channel: config.minecraft.channel,
+                            latestVersion: status.latestVersion,
+                            looksLikeChannelMismatch:
+                                status.looksLikeChannelMismatch,
+                            oppositeChannel: status.oppositeChannel,
+                            canPromptForUpgrade,
+                        });
 
+                    const choices = canPromptForUpgrade
+                        ? [
+                              {
+                                  title: `Update to ${status.latestVersion} + local server`,
+                                  value: "update",
+                              },
+                              {
+                                  title: "Keep current + no local server",
+                                  value: "continue",
+                              },
+                              {
+                                  title: "Silence 24h + no local server",
+                                  value: "silence",
+                              },
+                          ]
+                        : [
+                              {
+                                  title: "Keep current + no local server",
+                                  value: "continue",
+                              },
+                              {
+                                  title: "Silence 24h + no local server",
+                                  value: "silence",
+                              },
+                          ];
                     const promptResult = await runPrompt({
                         type: "select",
                         name: "minecraftTargetUpdateChoice",
                         message: promptMessage,
-                        choices: [
-                            {
-                                title: `Update targetVersion to ${status.latestVersion} and continue with local server`,
-                                value: "update",
-                            },
-                            {
-                                title: "Continue without local server",
-                                value: "continue",
-                            },
-                            {
-                                title: "Silence this prompt for 24 hours and continue without local server",
-                                value: "silence",
-                            },
-                        ],
+                        choices,
                         initial: 1,
                         hint: "- Use arrow keys. Enter to confirm.",
                         instructions: false,
@@ -917,7 +1023,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                         | MinecraftTargetUpdateChoice
                         | undefined;
 
-                    if (choice === "update") {
+                    if (choice === "update" && canPromptForUpgrade) {
                         await writeMinecraftTargetVersion(
                             configPath,
                             status.latestVersion,
@@ -948,14 +1054,27 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
 
                     return {
                         keepLocalServer: false,
-                        exitMessage: `Local server was disabled because minecraft.targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel.`,
+                        exitMessage: `Local server was disabled because BDS version ${effectiveBdsVersion} is not available on the ${config.minecraft.channel} channel.`,
                         exitIsError: true,
-                        continueMessage: `Continuing without local server because minecraft.targetVersion ${configuredTargetVersion} is not available on the ${config.minecraft.channel} channel.`,
+                        continueMessage: `Continuing without local server because BDS version ${effectiveBdsVersion} is not available on the ${config.minecraft.channel} channel.`,
                     };
                 }
 
                 if (!status.outdated) {
                     await clearMinecraftTargetUpdatePromptSilence(projectRoot);
+                    return { keepLocalServer: true };
+                }
+
+                if (!canPromptForUpgrade) {
+                    debug.log(
+                        "bedrock-downloads",
+                        "skipping target-version upgrade prompt due to non-config-file source",
+                        {
+                            versionSource,
+                            effectiveBdsVersion,
+                            latestChannelVersion: status.latestVersion,
+                        },
+                    );
                     return { keepLocalServer: true };
                 }
 
@@ -971,22 +1090,19 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                         "target-version prompt is currently silenced",
                         {
                             channel: config.minecraft.channel,
-                            configuredVersion: configuredTargetVersion,
+                            configuredVersion: effectiveBdsVersion,
                             latestChannelVersion: status.latestVersion,
                         },
                     );
                     return { keepLocalServer: true };
                 }
 
-                const channelLabel =
-                    config.minecraft.channel === "preview"
-                        ? "preview"
-                        : "stable";
-                const promptMessage = [
-                    `A newer ${channelLabel} Bedrock dedicated server is available (${status.latestVersion}).`,
-                    `The project targetVersion is still ${configuredTargetVersion}.`,
-                    "How would you like to continue?",
-                ].join("\n");
+                const promptMessage =
+                    buildOutdatedLocalServerVersionPromptMessage({
+                        effectiveBdsVersion,
+                        channel: config.minecraft.channel,
+                        latestVersion: status.latestVersion,
+                    });
 
                 const promptResult = await runPrompt({
                     type: "select",
@@ -994,15 +1110,15 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                     message: promptMessage,
                     choices: [
                         {
-                            title: `Update targetVersion to ${status.latestVersion} and continue`,
+                            title: `Update to ${status.latestVersion}`,
                             value: "update",
                         },
                         {
-                            title: "Continue without updating",
+                            title: "Keep current",
                             value: "continue",
                         },
                         {
-                            title: "Silence this prompt for 24 hours",
+                            title: "Silence 24h",
                             value: "silence",
                         },
                     ],

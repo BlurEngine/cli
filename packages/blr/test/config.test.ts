@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { loadBlurConfig } from "../src/config.js";
+import { readConfiguredMinecraftTargetVersion } from "../src/minecraft-config.js";
 import { createTempDirectory, writeJsonFile } from "./helpers.js";
 
 function createBehaviorManifest(projectName: string) {
@@ -86,4 +87,53 @@ test("loadBlurConfig derives the default worldSourcePath from dev.localServer.wo
     );
     assert.equal(config.features.behaviorPack, true);
     assert.equal(config.features.resourcePack, false);
+});
+
+test("loadBlurConfig preserves the authored pack minEngineVersion", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        minecraft: {
+            targetVersion: "1.26.11.1",
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.minecraft.minEngineVersion, [1, 26, 11]);
+    assert.deepEqual(config.packs.behavior?.minEngineVersion, [1, 26, 0]);
+});
+
+test("readConfiguredMinecraftTargetVersion respects environment overrides", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        minecraft: {
+            targetVersion: "1.26.0.2",
+        },
+    });
+
+    const previousTargetVersion = process.env.BLR_MINECRAFT_TARGETVERSION;
+    process.env.BLR_MINECRAFT_TARGETVERSION = "1.26.11.1";
+    t.after(() => {
+        if (typeof previousTargetVersion === "undefined") {
+            delete process.env.BLR_MINECRAFT_TARGETVERSION;
+            return;
+        }
+        process.env.BLR_MINECRAFT_TARGETVERSION = previousTargetVersion;
+    });
+
+    assert.equal(
+        await readConfiguredMinecraftTargetVersion(
+            path.join(projectRoot, "blr.config.json"),
+            "1.26.0.2",
+        ),
+        "1.26.11.1",
+    );
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.minecraft.targetVersion, "1.26.11.1");
 });

@@ -13,22 +13,14 @@ import {
     copyDirectory,
     ensureDirectory,
     exists,
-    readJson,
     removeDirectory,
     removeFilesNamed,
-    writeJson,
 } from "./fs.js";
 import type {
     BlurMachineSettings,
     BlurProject,
     MinecraftProduct,
 } from "./types.js";
-
-type StageManifestShape = {
-    header?: {
-        min_engine_version?: unknown;
-    };
-};
 
 export type MinecraftDevelopmentRootResolution = {
     explicitPath?: string;
@@ -219,17 +211,6 @@ async function stageProjectContent(
     await removeDirectory(artifacts.stageRoot);
     await ensureDirectory(artifacts.stageRoot);
 
-    const patchManifestTargetVersion = async (manifestPath: string) => {
-        const manifest = await readJson<StageManifestShape>(manifestPath);
-        await writeJson(manifestPath, {
-            ...manifest,
-            header: {
-                ...(manifest.header ?? {}),
-                min_engine_version: config.minecraft.minEngineVersion,
-            },
-        });
-    };
-
     let behaviorSource: string | undefined;
     if (config.packs.behavior && artifacts.stageBehaviorPackDirectory) {
         behaviorSource = path.resolve(
@@ -243,9 +224,6 @@ async function stageProjectContent(
         await removeFilesNamed(
             artifacts.stageBehaviorPackDirectory,
             ".gitkeep",
-        );
-        await patchManifestTargetVersion(
-            path.join(artifacts.stageBehaviorPackDirectory, "manifest.json"),
         );
     }
 
@@ -262,9 +240,6 @@ async function stageProjectContent(
         await removeFilesNamed(
             artifacts.stageResourcePackDirectory,
             ".gitkeep",
-        );
-        await patchManifestTargetVersion(
-            path.join(artifacts.stageResourcePackDirectory, "manifest.json"),
         );
     }
 

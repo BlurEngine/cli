@@ -220,7 +220,9 @@ async function readArchiveResponse(
     state: ResolvedBdsState,
     reporter?: BdsProvisionReporter,
 ): Promise<BdsDownloadProgress & { buffer: Buffer }> {
-    const totalBytes = parseContentLength(response.headers.get("content-length"));
+    const totalBytes = parseContentLength(
+        response.headers.get("content-length"),
+    );
     reporter?.onDownloadStart?.({
         version: state.version,
         platform: state.platform,
@@ -261,7 +263,11 @@ async function readArchiveResponse(
             continue;
         }
 
-        const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+        const chunk = Buffer.from(
+            value.buffer,
+            value.byteOffset,
+            value.byteLength,
+        );
         chunks.push(chunk);
         bytesReceived += chunk.byteLength;
         emitProgress();
@@ -529,6 +535,11 @@ async function extractIfMissing(
     }
 
     await downloadIfMissing(state, debug, reporter);
+    const serverRootDirectory = path.dirname(state.serverDirectory);
+    const createdServerRootDirectory = !(await exists(serverRootDirectory));
+    if (createdServerRootDirectory) {
+        await ensureDirectory(serverRootDirectory);
+    }
     reporter?.onExtractStart?.({
         version: state.version,
         platform: state.platform,
@@ -565,6 +576,9 @@ async function extractIfMissing(
     } finally {
         if (!extracted) {
             await removeDirectory(stagingDirectory);
+            if (createdServerRootDirectory) {
+                await removeDirectory(serverRootDirectory);
+            }
         }
     }
     debug?.log("bds", "extracted BDS server", {
@@ -863,10 +877,14 @@ export async function bootstrapProjectWorldSourceFromBds(
         !(await isDirectory(state.worldDirectory)) ||
         !(await isDirectory(runtimeDbDirectory))
     ) {
-        debug?.log("bds", "runtime world not available for initial source sync", {
-            worldDirectory: state.worldDirectory,
-            worldSourceDirectory: state.worldSourceDirectory,
-        });
+        debug?.log(
+            "bds",
+            "runtime world not available for initial source sync",
+            {
+                worldDirectory: state.worldDirectory,
+                worldSourceDirectory: state.worldSourceDirectory,
+            },
+        );
         return "waiting-for-runtime";
     }
 
@@ -892,7 +910,6 @@ export async function ensureBds(
     );
     options.debug?.log("bds", "resolved BDS state", state);
     await ensureDirectory(state.cacheDirectory);
-    await ensureDirectory(path.dirname(state.serverDirectory));
     await extractIfMissing(
         projectRoot,
         config,
@@ -921,7 +938,6 @@ export async function prefetchBdsArchive(
     );
     options.debug?.log("bds", "resolved BDS state for prefetch", state);
     await ensureDirectory(state.cacheDirectory);
-    await ensureDirectory(path.dirname(state.serverDirectory));
 
     if (await exists(state.executablePath)) {
         options.debug?.log("bds", "skipping BDS archive prefetch", {
