@@ -79,7 +79,27 @@ When watch mode is active:
 - `watch-scripts` uses the configured project-relative glob-style watch paths
 - `watch-allowlist` watches runtime BDS `allowlist.json` and copies it back into `server/allowlist.json`
 - `watch-world` watches the project world source for restart/reset triggers and captures the runtime BDS world back into that project world source on shutdown
+- `watch-world` starts only after startup world reconciliation is complete
 - `watch-world` requires the project world source to contain a valid Bedrock world (`db/` directory)
+
+When `world.backend` is `s3` and `local-server` is selected:
+
+- `blr` treats `worlds/worlds.json` as the project pin for the active remote world version
+- `projectWorldMode` controls how `dev` handles remote project-world updates:
+  - `prompt`: prompt for newer remote versions in interactive terminals
+  - `auto`: pull automatically
+  - `manual`: keep the current project world unless you pull manually
+- if the project world is missing and a matching pinned version is required, `dev` treats that as required reconciliation:
+  - `prompt`: ask before pulling
+  - `auto`: pull automatically
+  - `manual`: fail clearly
+- optional newer-remote prompts use:
+  - `Pull latest remote world`
+  - `Keep current world`
+  - `Silence 24h`
+- if the project pin belongs to a different remote world configuration than the current `blr.config.json`, `dev` ignores that stale pin until a new remote action refreshes it
+- if bucket versioning is unavailable, version-aware remote world sync is unavailable and `dev` falls back to the local/manual world workflow
+- if `dev` needs a remote pull because of the selected mode and that pull fails, startup stops instead of continuing silently
 
 When `local-server` is live:
 
@@ -115,6 +135,17 @@ Interactive behavior:
 - pressing `Ctrl+C` during an interactive prompt aborts the command immediately
 - confirming with no selected items exits cleanly without doing any work
 - if no active dev targets are enabled, `dev` performs the initial build and exits even when `watch` would otherwise be `true`
+
+Runtime world safety:
+
+- `runtimeWorldMode` controls how `dev` seeds the BDS runtime world from the project world
+- if the runtime world is missing, `dev` copies the current project world into BDS automatically
+- if the runtime world exists and the project world source changed since the last runtime seed:
+  - `prompt`: ask before replacing it
+  - `preserve`: keep it
+  - `replace`: replace it automatically
+  - `backup`: move it into `worlds_backups/` and then replace it
+- runtime backup and replacement only happen before BDS starts
 
 Flags:
 
@@ -347,7 +378,47 @@ Notes:
 - `projectPrefix` is disabled by default
 - if `projectPrefix` is enabled, the layout becomes `<keyPrefix>/<projectName>/<worldName>.zip` and `<keyPrefix>/<projectName>/<worldName>.lock.json`
 - the lock file contains metadata about the owning actor, command, reason, CLI version, and expiry time
-- `blr dev` and `blr package` still operate on the local project world source; they do not auto-pull or auto-push remote worlds
+- `blr world list` always works from the current object layout
+- bucket versioning is required for versioned remote world workflows:
+  - `blr world versions`
+  - `blr world pull`
+  - `blr world pull --version-id`
+  - `blr world push`
+  - remote world sync behavior in `blr dev`
+- `blr world status` and `blr world list` still work when bucket versioning is unavailable
+- `blr dev` and `blr package` still operate on the local project world source; they do not auto-push remote worlds
+- successful versioned remote pull and push operations create or refresh `worlds/worlds.json`
+- `worlds/worlds.json` is a project pin, not a second copy of `blr.config.json`
+- each tracked world entry stores:
+  - `name`
+  - `remoteFingerprint`
+  - `versionId`
+- internal runtime and materialization bookkeeping lives under `.blr/state/world-state.json`
+- generated projects ignore raw world contents by default but still allow `worlds/worlds.json` to be committed
+- if the remote fingerprint drifts, `blr` ignores the stale pin until the next successful remote world action refreshes it
+
+### `blr world list`
+
+Lists remote world names from the configured S3 backend namespace.
+
+Syntax:
+
+```text
+blr world list
+```
+
+Behavior:
+
+- scans the configured S3 namespace for `<worldName>.zip` objects
+- ignores lock files and unrelated objects
+- works even when bucket versioning is unavailable
+- includes latest remote object metadata in JSON output when bucket versioning is enabled
+- prints a short note when remote version information cannot be verified for the configured bucket
+
+Flags:
+
+- `--json [enabled]`: print JSON output for scripting
+- `--debug [enabled]`: enable or disable debug logs for world backend activity
 
 ### `blr world use`
 
@@ -380,8 +451,39 @@ Syntax:
 blr world status [worldName]
 ```
 
+Behavior:
+
+- includes local world validity
+- includes remote lock and latest object metadata when `world.backend` is `s3`
+- includes tracked project pin details from `worlds/worlds.json` when present
+- reports whether that tracked pin still matches the current remote world target
+- includes the last remote version materialized into the project world when available
+
 Flags:
 
+- `--debug [enabled]`: enable or disable debug logs for world backend activity
+
+### `blr world versions`
+
+Lists remote object versions for the selected world when bucket versioning is enabled.
+
+Syntax:
+
+```text
+blr world versions [worldName]
+```
+
+Behavior:
+
+- if `worldName` is omitted in an interactive terminal, `blr` offers a world picker built from tracked worlds in `worlds/worlds.json` plus local directories under `worlds/`
+- if `worldName` is omitted in non-interactive use or with `--json`, `blr` falls back to `dev.localServer.worldName`
+- lists newest-to-oldest remote object versions for `<worldName>.zip`
+- shows who pushed each version when that push metadata is recorded on the remote object
+- fails with a short friendly message when bucket versioning is not available for the configured backend
+
+Flags:
+
+- `--json [enabled]`: print JSON output for scripting
 - `--debug [enabled]`: enable or disable debug logs for world backend activity
 
 ### `blr world pull`
@@ -396,16 +498,22 @@ blr world pull [worldName]
 
 Behavior:
 
+- requires bucket versioning for the configured S3 backend
 - by default, acquires the remote world lock first
-- downloads `<worldName>.zip` into `.blr/cache/worlds/...`
-- extracts it and copies the result into `worlds/<worldName>/`
+- downloads `<worldName>.zip` into `.blr/cache/worlds/<bucket>/<worldName>/<encodedVersionId>.zip`
+- extracts it temporarily, copies the result into `worlds/<worldName>/`, and then removes the extracted cache copy
+- can pull a specific remote object version when bucket versioning is enabled
 - if the remote object is missing, the command fails without reporting success
+- writes or refreshes the project pin in `worlds/worlds.json`
+- prints the pulled remote version ID on success
+- fails if the same world is currently being watched by an active `blr dev` local-server session
 
 Flags:
 
 - `--lock [enabled]`: acquire or skip the remote lock before pulling
 - `--force-lock [enabled]`: steal the remote lock when necessary
 - `--reason <reason>`: lock reason recorded in the remote lock object
+- `--version-id <versionId>`: pull a specific remote object version when bucket versioning is enabled
 - `--debug [enabled]`: enable or disable debug logs for world backend activity
 
 ### `blr world capture`
@@ -447,10 +555,17 @@ blr world push [worldName]
 Behavior:
 
 - validates that the local world source contains a real Bedrock world (`db/`)
+- requires bucket versioning for the configured S3 backend
 - acquires the remote world lock before uploading
-- archives the local world into `.blr/cache/worlds/.../world.zip`
+- archives the local world temporarily for upload and does not keep extra extracted cache state
 - uploads the archive to the resolved remote object key
+- compares the project pin in `worlds/worlds.json` against the latest remote version before uploading
+- if the project is missing a tracked base version or the remote has moved ahead, `blr` refuses to push by default
+- in an interactive terminal, `blr` lets you confirm a force push explicitly
+- in a non-interactive terminal, `blr` exits with a clear error instead of guessing
 - unlocks after a successful push by default
+- writes the newly pushed remote version back into `worlds/worlds.json`
+- writes BlurEngine push metadata onto the uploaded object when the S3-compatible backend preserves custom object metadata
 
 Flags:
 
@@ -495,10 +610,13 @@ Examples:
 
 ```text
 blr world use "Creative Sandbox"
+blr world list
 blr world status
+blr world versions
 blr world capture
 blr world capture --force true
 blr world pull
+blr world pull --version-id 3Lg7yT5wV5mN6bR6dExample
 blr world pull "Bedrock level" --reason "start editing session"
 blr world push --unlock false --reason "save progress and keep lock"
 blr world lock --ttl-seconds 14400 --reason "long editing session"

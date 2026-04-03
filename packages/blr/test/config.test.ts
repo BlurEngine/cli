@@ -137,3 +137,46 @@ test("readConfiguredMinecraftTargetVersion respects environment overrides", asyn
     const { config } = await loadBlurConfig(projectRoot);
     assert.equal(config.minecraft.targetVersion, "1.26.11.1");
 });
+
+test("loadBlurConfig respects environment overrides for local-server worldSync modes", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        dev: {
+            localServer: {
+                worldSync: {
+                    projectWorldMode: "prompt",
+                    runtimeWorldMode: "prompt",
+                },
+            },
+        },
+    });
+
+    const previousProjectMode =
+        process.env.BLR_DEV_LOCALSERVER_WORLDSYNC_PROJECTWORLDMODE;
+    const previousRuntimeMode =
+        process.env.BLR_DEV_LOCALSERVER_WORLDSYNC_RUNTIMEWORLDMODE;
+    process.env.BLR_DEV_LOCALSERVER_WORLDSYNC_PROJECTWORLDMODE = "auto";
+    process.env.BLR_DEV_LOCALSERVER_WORLDSYNC_RUNTIMEWORLDMODE = "backup";
+    t.after(() => {
+        if (typeof previousProjectMode === "undefined") {
+            delete process.env.BLR_DEV_LOCALSERVER_WORLDSYNC_PROJECTWORLDMODE;
+        } else {
+            process.env.BLR_DEV_LOCALSERVER_WORLDSYNC_PROJECTWORLDMODE =
+                previousProjectMode;
+        }
+
+        if (typeof previousRuntimeMode === "undefined") {
+            delete process.env.BLR_DEV_LOCALSERVER_WORLDSYNC_RUNTIMEWORLDMODE;
+        } else {
+            process.env.BLR_DEV_LOCALSERVER_WORLDSYNC_RUNTIMEWORLDMODE =
+                previousRuntimeMode;
+        }
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.dev.localServer.worldSync.projectWorldMode, "auto");
+    assert.equal(config.dev.localServer.worldSync.runtimeWorldMode, "backup");
+});

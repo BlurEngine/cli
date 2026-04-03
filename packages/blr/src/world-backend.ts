@@ -1,9 +1,13 @@
 import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import {
     DeleteObjectCommand,
+    GetBucketVersioningCommand,
     GetObjectCommand,
     HeadObjectCommand,
+    ListObjectsV2Command,
+    ListObjectVersionsCommand,
     PutObjectCommand,
     S3Client,
     S3ServiceException,
@@ -17,10 +21,20 @@ import type { DebugLogger } from "./debug.js";
 import {
     copyDirectory,
     ensureDirectory,
+    exists,
     isDirectory,
     removeDirectory,
-    writeJson,
 } from "./fs.js";
+import {
+    buildTrackedProjectWorldFingerprint,
+    readTrackedProjectWorld,
+    type TrackedProjectWorldEntry,
+    upsertTrackedProjectWorld,
+} from "./project-world-state.js";
+import {
+    markProjectWorldMaterializedFromRemote,
+    readMaterializedProjectWorldRemoteState,
+} from "./world-internal-state.js";
 import type { BlurProject } from "./types.js";
 import { getCliPackageVersion } from "./utils.js";
 import {
@@ -62,14 +76,13 @@ type ResolvedWorldS3Context = {
     worldName: string;
     worldSourcePath: string;
     worldSourceDirectory: string;
-    cacheRoot: string;
-    archivePath: string;
-    extractedDirectory: string;
-    metadataPath: string;
+    cacheDirectory: string;
+    legacyCacheDirectory: string;
     bucket: string;
     region: string;
     endpoint: string;
     keyPrefix: string;
+    keyNamespace: string;
     projectPrefix: boolean;
     forcePathStyle: boolean;
     objectKey: string;
@@ -88,6 +101,7 @@ type PullWorldOptions = {
     lock?: boolean;
     forceLock?: boolean;
     reason?: string;
+    versionId?: string;
     debug?: DebugLogger;
 };
 
@@ -95,6 +109,7 @@ type PushWorldOptions = {
     forceLock?: boolean;
     unlock?: boolean;
     reason?: string;
+    allowRemoteConflict?: boolean;
     debug?: DebugLogger;
 };
 
@@ -102,6 +117,110 @@ type ReleaseWorldLockOptions = {
     force?: boolean;
     debug?: DebugLogger;
 };
+
+export type WorldVersioningMode =
+    | "enabled"
+    | "disabled"
+    | "suspended"
+    | "unknown";
+
+export type WorldVersioningStatus = {
+    mode: WorldVersioningMode;
+    available: boolean;
+    detail?: string;
+};
+
+export type RemoteWorldObjectMetadata = {
+    versionId?: string;
+    etag?: string;
+    lastModified?: string;
+    size?: number;
+    isLatest?: boolean;
+    pushMetadataRecorded: boolean;
+    pushedBy?: string;
+    pushedAt?: string;
+    pushReason?: string;
+    pushMetadataAvailable?: boolean;
+    pushMetadataDetail?: string;
+};
+
+export type ListedRemoteWorld = {
+    worldName: string;
+    objectKey: string;
+    versioning: WorldVersioningStatus;
+    latestObject?: RemoteWorldObjectMetadata;
+};
+
+export type RemoteWorldVersionEntry = {
+    worldName: string;
+    objectKey: string;
+    versionId?: string;
+    isLatest: boolean;
+    etag?: string;
+    lastModified?: string;
+    size?: number;
+    pushMetadataRecorded: boolean;
+    pushedBy?: string;
+    pushedAt?: string;
+    pushReason?: string;
+    pushMetadataAvailable?: boolean;
+    pushMetadataDetail?: string;
+};
+
+export type WorldObjectMetadataSupport = {
+    available: boolean;
+    detail?: string;
+};
+
+export type PushWorldResult = {
+    context: ResolvedWorldS3Context;
+    versioning: WorldVersioningStatus;
+    versionId?: string;
+};
+
+export type PullWorldResult = {
+    context: ResolvedWorldS3Context;
+    versionId: string;
+};
+
+export type TrackedWorldBinding = {
+    entry?: TrackedProjectWorldEntry;
+    currentFingerprint: string;
+    matchesCurrentRemote: boolean;
+};
+
+export type WorldPushConflictKind =
+    | "missing-tracked-version"
+    | "remote-fingerprint-drift"
+    | "remote-version-mismatch";
+
+export class WorldPushRemoteConflictError extends Error {
+    kind: WorldPushConflictKind;
+    worldName: string;
+    trackedVersionId?: string;
+    latestRemoteVersionId?: string;
+    trackedRemoteFingerprint?: string;
+    currentRemoteFingerprint: string;
+
+    constructor(input: {
+        kind: WorldPushConflictKind;
+        worldName: string;
+        trackedVersionId?: string;
+        latestRemoteVersionId?: string;
+        trackedRemoteFingerprint?: string;
+        currentRemoteFingerprint: string;
+        message: string;
+    }) {
+        super(input.message);
+        this.name = "WorldPushRemoteConflictError";
+        this.kind = input.kind;
+        this.worldName = input.worldName;
+        this.trackedVersionId = input.trackedVersionId;
+        this.latestRemoteVersionId = input.latestRemoteVersionId;
+        this.trackedRemoteFingerprint = input.trackedRemoteFingerprint;
+        this.currentRemoteFingerprint = input.currentRemoteFingerprint;
+    }
+}
 
 export type WorldStatus = {
     backend: "local" | "s3";
@@ -122,13 +241,33 @@ export type WorldStatus = {
         forcePathStyle: boolean;
         objectKey: string;
         lockKey: string;
-        cacheRoot: string;
-        archivePath: string;
-        extractedDirectory: string;
+        cacheDirectory: string;
+        versioning: WorldVersioningStatus;
+        latestObject?: RemoteWorldObjectMetadata;
+        tracked?: {
+            versionId: string;
+            remoteFingerprint: string;
+            matchesCurrentRemote: boolean;
+        };
+        materializedRemote?: {
+            versionId: string;
+            remoteFingerprint: string;
+            materializedAt: string;
+            matchesCurrentRemote: boolean;
+        };
         lock?: WorldLockRecord;
         remoteObjectExists?: boolean;
     };
 };
+
+const WORLD_OBJECT_METADATA_KEYS = {
+    actor: "blr-actor",
+    pushedAt: "blr-pushed-at",
+    reason: "blr-reason",
+    cliVersion: "blr-cli-version",
+    projectName: "blr-project-name",
+    packageName: "blr-package-name",
+} as const;
 
 function toObjectKeySegment(value: string, fallback: string): string {
     const trimmed = value.trim();
@@ -146,6 +285,17 @@ function toCacheSegment(value: string, fallback: string): string {
         .replace(/\s+/g, " ")
         .trim();
     return normalized.length > 0 ? normalized : fallback;
+}
+
+function encodeCacheVersionId(versionId: string): string {
+    const trimmed = versionId.trim();
+    if (trimmed.length === 0) {
+        return "unknown-version";
+    }
+    if (trimmed === "null") {
+        return "null";
+    }
+    return Buffer.from(trimmed, "utf8").toString("base64url");
 }
 
 function joinObjectKey(...segments: Array<string | undefined>): string {
@@ -219,6 +369,281 @@ function requireS3WorldBackend(config: BlurProject): void {
     }
 }
 
+function versioningUnavailableMessage(reason?: string): string {
+    if (typeof reason === "string" && reason.trim().length > 0) {
+        return `Remote world version features are unavailable because ${reason.trim()}.`;
+    }
+    return "Remote world version features are unavailable because bucket versioning is not enabled or could not be verified for this backend.";
+}
+
+function isUnknownS3BackendError(error: unknown): boolean {
+    if (error instanceof S3ServiceException) {
+        return (
+            error.name === "UnknownError" ||
+            error.message.trim().toLowerCase() === "unknownerror"
+        );
+    }
+
+    if (error instanceof Error) {
+        return (
+            error.name === "UnknownError" ||
+            error.message.trim().toLowerCase() === "unknownerror"
+        );
+    }
+
+    return false;
+}
+
+function describeS3ObjectTarget(options: {
+    bucket: string;
+    key: string;
+    versionId?: string;
+    label: string;
+}): string {
+    if (typeof options.versionId === "string" && options.versionId.length > 0) {
+        return `${options.label} version ${options.versionId} at s3://${options.bucket}/${options.key}`;
+    }
+    return `${options.label} s3://${options.bucket}/${options.key}`;
+}
+
+function buildS3ObjectRequestFailureMessage(options: {
+    action: string;
+    bucket: string;
+    key: string;
+    versionId?: string;
+    label: string;
+    requiredPermission?: string;
+    error: unknown;
+}): string {
+    const target = describeS3ObjectTarget({
+        bucket: options.bucket,
+        key: options.key,
+        versionId: options.versionId,
+        label: options.label,
+    });
+
+    if (options.error instanceof S3ServiceException) {
+        if (
+            options.error.name === "AccessDenied" ||
+            options.error.name === "UnauthorizedOperation" ||
+            options.error.$metadata.httpStatusCode === 401 ||
+            options.error.$metadata.httpStatusCode === 403
+        ) {
+            const permissionHint =
+                typeof options.requiredPermission === "string" &&
+                options.requiredPermission.length > 0
+                    ? ` Ensure the active credentials allow ${options.requiredPermission}.`
+                    : "";
+            return `blr could not ${options.action} ${target} (${options.error.name}).${permissionHint}`;
+        }
+
+        if (isUnknownS3BackendError(options.error)) {
+            return `blr could not ${options.action} ${target} because the S3 backend returned an unknown error. This backend may not fully support this request, or the active credentials may not allow it.`;
+        }
+
+        if (
+            typeof options.error.message === "string" &&
+            options.error.message.trim().length > 0
+        ) {
+            return `blr could not ${options.action} ${target} (${options.error.name}: ${options.error.message.trim()})`;
+        }
+
+        return `blr could not ${options.action} ${target} (${options.error.name})`;
+    }
+
+    if (options.error instanceof Error) {
+        if (options.error.name === "CredentialsProviderError") {
+            return `blr could not load S3 credentials to ${options.action} ${target}.`;
+        }
+
+        if (isUnknownS3BackendError(options.error)) {
+            return `blr could not ${options.action} ${target} because the S3 backend returned an unknown error. This backend may not fully support this request, or the active credentials may not allow it.`;
+        }
+
+        if (options.error.message.trim().length > 0) {
+            return `blr could not ${options.action} ${target} (${options.error.name}: ${options.error.message.trim()})`;
+        }
+
+        return `blr could not ${options.action} ${target} (${options.error.name})`;
+    }
+
+    return `blr could not ${options.action} ${target}`;
+}
+
+function resolveVersioningProbeFailureDetail(
+    error: unknown,
+    context: ResolvedWorldS3Context,
+): string {
+    if (isUnknownS3BackendError(error)) {
+        return `blr could not verify bucket versioning for ${context.bucket} because the S3 backend returned an unknown error. This backend may not fully support GetBucketVersioning, or the active credentials may not allow it.`;
+    }
+
+    if (error instanceof S3ServiceException) {
+        if (
+            error.name === "AccessDenied" ||
+            error.name === "UnauthorizedOperation" ||
+            error.$metadata.httpStatusCode === 401 ||
+            error.$metadata.httpStatusCode === 403
+        ) {
+            return `blr could not read bucket versioning for ${context.bucket} (${error.name}). Ensure the active credentials allow s3:GetBucketVersioning`;
+        }
+
+        if (
+            error.name === "NotImplemented" ||
+            error.name === "XNotImplemented"
+        ) {
+            return "this S3 backend does not support bucket versioning detection";
+        }
+
+        if (
+            typeof error.message === "string" &&
+            error.message.trim().length > 0
+        ) {
+            return `blr could not verify bucket versioning for ${context.bucket} (${error.name}: ${error.message.trim()})`;
+        }
+
+        return `blr could not verify bucket versioning for ${context.bucket} (${error.name})`;
+    }
+
+    if (error instanceof Error) {
+        if (error.name === "CredentialsProviderError") {
+            return "blr could not load S3 credentials to verify bucket versioning";
+        }
+        if (error.message.trim().length > 0) {
+            return `blr could not verify bucket versioning (${error.name}: ${error.message.trim()})`;
+        }
+        return `blr could not verify bucket versioning (${error.name})`;
+    }
+
+    return "blr could not verify bucket versioning";
+}
+
+function normalizeS3Timestamp(value: Date | undefined): string | undefined {
+    return value instanceof Date ? value.toISOString() : undefined;
+}
+
+function normalizeS3Metadata(value: {
+    VersionId?: string;
+    ETag?: string;
+    LastModified?: Date;
+    ContentLength?: number;
+    IsLatest?: boolean;
+    Metadata?: Record<string, string>;
+}): RemoteWorldObjectMetadata {
+    const metadata = value.Metadata ?? {};
+    const pushedBy = metadata[WORLD_OBJECT_METADATA_KEYS.actor];
+    const pushedAt = metadata[WORLD_OBJECT_METADATA_KEYS.pushedAt];
+    const pushReason = metadata[WORLD_OBJECT_METADATA_KEYS.reason];
+    const pushMetadataRecorded =
+        typeof pushedBy === "string" ||
+        typeof pushedAt === "string" ||
+        typeof pushReason === "string";
+
+    return {
+        versionId: value.VersionId,
+        etag: value.ETag,
+        lastModified: normalizeS3Timestamp(value.LastModified),
+        size:
+            typeof value.ContentLength === "number"
+                ? value.ContentLength
+                : undefined,
+        isLatest: value.IsLatest,
+        pushMetadataRecorded,
+        pushedBy,
+        pushedAt,
+        pushReason,
+        pushMetadataAvailable: true,
+    };
+}
+
+function resolveObjectMetadataFailureDetail(
+    error: unknown,
+    versionId?: string,
+): string {
+    const versionLabel =
+        typeof versionId === "string" && versionId.length > 0
+            ? `version ${versionId}`
+            : "an unspecified version";
+
+    if (error instanceof S3ServiceException) {
+        if (
+            typeof error.message === "string" &&
+            error.message.trim().length > 0
+        ) {
+            return `blr could not read push metadata for ${versionLabel} (${error.name}: ${error.message.trim()})`;
+        }
+        return `blr could not read push metadata for ${versionLabel} (${error.name})`;
+    }
+
+    if (error instanceof Error) {
+        if (error.message.trim().length > 0) {
+            return `blr could not read push metadata for ${versionLabel} (${error.name}: ${error.message.trim()})`;
+        }
+        return `blr could not read push metadata for ${versionLabel} (${error.name})`;
+    }
+
+    return `blr could not read push metadata for ${versionLabel}`;
+}
+
+function createWorldObjectMetadata(input: {
+    actor: WorldActor;
+    projectName: string;
+    packageName: string;
+    cliVersion: string;
+    reason?: string;
+}): Record<string, string> {
+    const metadata: Record<string, string> = {
+        [WORLD_OBJECT_METADATA_KEYS.actor]: `${input.actor.userName}@${input.actor.hostName}`,
+        [WORLD_OBJECT_METADATA_KEYS.pushedAt]: new Date().toISOString(),
+        [WORLD_OBJECT_METADATA_KEYS.cliVersion]: input.cliVersion,
+        [WORLD_OBJECT_METADATA_KEYS.projectName]: input.projectName,
+        [WORLD_OBJECT_METADATA_KEYS.packageName]: input.packageName,
+    };
+    const trimmedReason = input.reason?.trim();
+    if (trimmedReason) {
+        metadata[WORLD_OBJECT_METADATA_KEYS.reason] = trimmedReason;
+    }
+    return metadata;
+}
+
+async function persistTrackedProjectWorldState(
+    projectRoot: string,
+    context: ResolvedWorldS3Context,
+    value: {
+        versionId: string;
+    },
+): Promise<void> {
+    await upsertTrackedProjectWorld(projectRoot, {
+        name: context.worldName,
+        remoteFingerprint: buildTrackedProjectWorldFingerprint({
+            backend: "s3",
+            bucket: context.bucket,
+            endpoint: context.endpoint,
+            objectKey: context.objectKey,
+        }),
+        versionId: value.versionId,
+    });
+}
+
+function resolveTrackedWorldBinding(
+    context: ResolvedWorldS3Context,
+    entry?: TrackedProjectWorldEntry,
+): TrackedWorldBinding {
+    const currentFingerprint = buildTrackedProjectWorldFingerprint({
+        backend: "s3",
+        bucket: context.bucket,
+        endpoint: context.endpoint,
+        objectKey: context.objectKey,
+    });
+    return {
+        entry,
+        currentFingerprint,
+        matchesCurrentRemote:
+            typeof entry?.remoteFingerprint === "string" &&
+            entry.remoteFingerprint === currentFingerprint,
+    };
+}
+
 function createS3ClientForWorld(config: BlurProject): S3Client {
     const region =
         config.world.s3.region.trim() ||
@@ -258,40 +683,87 @@ function resolveWorldS3Context(
     );
     const objectFileName = `${worldSegment}.zip`;
     const lockFileName = `${worldSegment}.lock.json`;
-    const cacheSegments = [
+    const cacheDirectory = path.resolve(
+        projectRoot,
+        ".blr",
+        "cache",
+        "worlds",
+        toCacheSegment(config.world.s3.bucket.trim(), "bucket"),
+        toCacheSegment(worldSegment, "world"),
+    );
+    const legacyCacheDirectory = path.resolve(
+        projectRoot,
+        ".blr",
+        "cache",
+        "worlds",
+        "s3",
         toCacheSegment(config.world.s3.bucket.trim(), "bucket"),
         ...keyNamespace
             .split("/")
             .filter((segment) => segment.length > 0)
             .map((segment) => toCacheSegment(segment, "segment")),
         toCacheSegment(worldSegment, "world"),
-    ];
-    const cacheRoot = path.resolve(
-        projectRoot,
-        ".blr",
-        "cache",
-        "worlds",
-        "s3",
-        ...cacheSegments,
     );
 
     return {
         worldName,
         worldSourcePath,
         worldSourceDirectory,
-        cacheRoot,
-        archivePath: path.join(cacheRoot, "world.zip"),
-        extractedDirectory: path.join(cacheRoot, "source"),
-        metadataPath: path.join(cacheRoot, "metadata.json"),
+        cacheDirectory,
+        legacyCacheDirectory,
         bucket: config.world.s3.bucket.trim(),
         region,
         endpoint: config.world.s3.endpoint.trim(),
         keyPrefix,
+        keyNamespace,
         projectPrefix: config.world.s3.projectPrefix,
         forcePathStyle: config.world.s3.forcePathStyle,
         objectKey: joinObjectKey(keyNamespace, objectFileName),
         lockKey: joinObjectKey(keyNamespace, lockFileName),
     };
+}
+
+function resolveCachedWorldArchivePath(
+    context: ResolvedWorldS3Context,
+    versionId: string,
+): string {
+    return path.join(
+        context.cacheDirectory,
+        `${encodeCacheVersionId(versionId)}.zip`,
+    );
+}
+
+function resolveTemporaryWorldArchivePath(
+    context: ResolvedWorldS3Context,
+): string {
+    return path.join(context.cacheDirectory, ".upload.tmp.zip");
+}
+
+function resolveTemporaryExtractedWorldDirectory(
+    context: ResolvedWorldS3Context,
+): string {
+    return path.join(context.cacheDirectory, ".extract");
+}
+
+async function pruneWorldCacheDirectory(
+    context: ResolvedWorldS3Context,
+): Promise<void> {
+    if (await exists(context.legacyCacheDirectory)) {
+        await removeDirectory(context.legacyCacheDirectory);
+    }
+    if (!(await exists(context.cacheDirectory))) {
+        return;
+    }
+
+    const entries = await readdir(context.cacheDirectory, {
+        withFileTypes: true,
+    });
+    for (const entry of entries) {
+        const targetPath = path.join(context.cacheDirectory, entry.name);
+        if (entry.isDirectory() || !entry.name.endsWith(".zip")) {
+            await removeDirectory(targetPath);
+        }
+    }
 }
 
 async function bodyToBuffer(body: unknown): Promise<Buffer> {
@@ -354,7 +826,16 @@ async function readRemoteLock(
         ) {
             return {};
         }
-        throw error;
+        throw new Error(
+            buildS3ObjectRequestFailureMessage({
+                action: "read",
+                bucket: context.bucket,
+                key: context.lockKey,
+                label: "remote world lock",
+                requiredPermission: "s3:GetObject",
+                error,
+            }),
+        );
     }
 }
 
@@ -400,36 +881,98 @@ async function deleteRemoteLock(
     );
 }
 
-async function remoteWorldObjectExists(
+async function resolveWorldVersioningStatus(
     client: S3Client,
     context: ResolvedWorldS3Context,
-): Promise<boolean> {
+): Promise<WorldVersioningStatus> {
     try {
-        await client.send(
+        const response = await client.send(
+            new GetBucketVersioningCommand({
+                Bucket: context.bucket,
+            }),
+        );
+        if (response.Status === "Enabled") {
+            return { mode: "enabled", available: true };
+        }
+        if (response.Status === "Suspended") {
+            return {
+                mode: "suspended",
+                available: false,
+                detail: versioningUnavailableMessage(
+                    `bucket versioning is suspended for ${context.bucket}`,
+                ),
+            };
+        }
+        return {
+            mode: "disabled",
+            available: false,
+            detail: versioningUnavailableMessage(
+                `bucket versioning is not enabled for ${context.bucket}`,
+            ),
+        };
+    } catch (error) {
+        return {
+            mode: "unknown",
+            available: false,
+            detail: versioningUnavailableMessage(
+                resolveVersioningProbeFailureDetail(error, context),
+            ),
+        };
+    }
+}
+
+function assertWorldVersioningAvailable(status: WorldVersioningStatus): void {
+    if (!status.available) {
+        throw new Error(status.detail ?? versioningUnavailableMessage());
+    }
+}
+
+async function readRemoteWorldObjectMetadata(
+    client: S3Client,
+    context: ResolvedWorldS3Context,
+    versionId?: string,
+): Promise<RemoteWorldObjectMetadata | undefined> {
+    try {
+        const response = await client.send(
             new HeadObjectCommand({
                 Bucket: context.bucket,
                 Key: context.objectKey,
+                VersionId: versionId,
             }),
         );
-        return true;
+        return normalizeS3Metadata(response);
     } catch (error) {
         if (
             error instanceof S3ServiceException &&
             (error.name === "NotFound" ||
+                error.name === "NoSuchKey" ||
                 error.$metadata.httpStatusCode === 404)
         ) {
-            return false;
+            return undefined;
         }
-        throw error;
+        throw new Error(
+            buildS3ObjectRequestFailureMessage({
+                action: "inspect",
+                bucket: context.bucket,
+                key: context.objectKey,
+                versionId,
+                label: "remote world object",
+                requiredPermission: "s3:GetObject",
+                error,
+            }),
+        );
     }
 }
 
-async function writeCacheMetadata(
+async function readTrackedWorldBinding(
+    projectRoot: string,
     context: ResolvedWorldS3Context,
-    value: Record<string, unknown>,
-): Promise<void> {
-    await ensureDirectory(context.cacheRoot);
-    await writeJson(context.metadataPath, value);
+): Promise<TrackedWorldBinding> {
+    const tracked = await readTrackedProjectWorld(
+        projectRoot,
+        context.worldName,
+    );
+    return resolveTrackedWorldBinding(context, tracked);
 }
 
 async function createWorldArchive(
@@ -451,6 +994,308 @@ async function extractWorldArchive(
     await ensureDirectory(extractedDirectory);
     const archive = new AdmZip(archivePath);
     archive.extractAllTo(extractedDirectory, true);
+}
+
+function getWorldNamespacePrefix(context: ResolvedWorldS3Context): string {
+    return context.keyNamespace.length > 0 ? `${context.keyNamespace}/` : "";
+}
+
+function worldNameFromObjectKey(
+    context: ResolvedWorldS3Context,
+    objectKey: string,
+): string | undefined {
+    const prefix = getWorldNamespacePrefix(context);
+    if (prefix.length > 0 && !objectKey.startsWith(prefix)) {
+        return undefined;
+    }
+
+    const relativeKey =
+        prefix.length > 0 ? objectKey.slice(prefix.length) : objectKey;
+    if (relativeKey.includes("/")) {
+        return undefined;
+    }
+    if (!relativeKey.endsWith(".zip")) {
+        return undefined;
+    }
+
+    const worldName = relativeKey.slice(0, -4).trim();
+    return worldName.length > 0 ? worldName : undefined;
+}
+
+export async function listRemoteWorldsFromS3(
+    projectRoot: string,
+    config: BlurProject,
+    explicitWorldName?: string,
+): Promise<ListedRemoteWorld[]> {
+    const seedWorldName = explicitWorldName ?? config.dev.localServer.worldName;
+    const context = resolveWorldS3Context(projectRoot, config, seedWorldName);
+    const client = createS3ClientForWorld(config);
+    const versioning = await resolveWorldVersioningStatus(client, context);
+    const prefix = getWorldNamespacePrefix(context);
+    const worlds = new Map<string, ListedRemoteWorld>();
+    let continuationToken: string | undefined;
+
+    do {
+        const response = await client.send(
+            new ListObjectsV2Command({
+                Bucket: context.bucket,
+                Prefix: prefix || undefined,
+                ContinuationToken: continuationToken,
+            }),
+        );
+        for (const entry of response.Contents ?? []) {
+            if (!entry.Key) {
+                continue;
+            }
+            const worldName = worldNameFromObjectKey(context, entry.Key);
+            if (!worldName || worlds.has(worldName)) {
+                continue;
+            }
+
+            const worldContext = resolveWorldS3Context(
+                projectRoot,
+                config,
+                worldName,
+            );
+            worlds.set(worldName, {
+                worldName,
+                objectKey: worldContext.objectKey,
+                versioning,
+                latestObject: versioning.available
+                    ? await readRemoteWorldObjectMetadata(client, worldContext)
+                    : undefined,
+            });
+        }
+        continuationToken = response.IsTruncated
+            ? response.NextContinuationToken
+            : undefined;
+    } while (continuationToken);
+
+    return Array.from(worlds.values()).sort((left, right) =>
+        left.worldName.localeCompare(right.worldName),
+    );
+}
+
+export async function listRemoteWorldVersionsFromS3(
+    projectRoot: string,
+    config: BlurProject,
+    worldName: string,
+): Promise<{
+    context: ResolvedWorldS3Context;
+    versioning: WorldVersioningStatus;
+    pushMetadataSupport: WorldObjectMetadataSupport;
+    versions: RemoteWorldVersionEntry[];
+}> {
+    const context = resolveWorldS3Context(projectRoot, config, worldName);
+    const client = createS3ClientForWorld(config);
+    const versioning = await resolveWorldVersioningStatus(client, context);
+    assertWorldVersioningAvailable(versioning);
+
+    const versions: RemoteWorldVersionEntry[] = [];
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+
+    do {
+        const response = await client.send(
+            new ListObjectVersionsCommand({
+                Bucket: context.bucket,
+                Prefix: context.objectKey,
+                KeyMarker: keyMarker,
+                VersionIdMarker: versionIdMarker,
+            }),
+        );
+        for (const entry of response.Versions ?? []) {
+            if (entry.Key !== context.objectKey) {
+                continue;
+            }
+            versions.push({
+                worldName,
+                objectKey: context.objectKey,
+                versionId: entry.VersionId,
+                isLatest: Boolean(entry.IsLatest),
+                etag: entry.ETag,
+                lastModified: normalizeS3Timestamp(entry.LastModified),
+                size: entry.Size,
+                pushMetadataRecorded: false,
+            });
+        }
+        keyMarker = response.IsTruncated ? response.NextKeyMarker : undefined;
+        versionIdMarker = response.IsTruncated
+            ? response.NextVersionIdMarker
+            : undefined;
+    } while (keyMarker || versionIdMarker);
+
+    let pushMetadataSupport: WorldObjectMetadataSupport = {
+        available: true,
+    };
+    let latestObjectMetadata: RemoteWorldObjectMetadata | undefined;
+
+    try {
+        latestObjectMetadata = await readRemoteWorldObjectMetadata(
+            client,
+            context,
+        );
+    } catch {
+        latestObjectMetadata = undefined;
+    }
+
+    const enrichedVersions = await Promise.all(
+        versions.map(async (version) => {
+            let metadata: RemoteWorldObjectMetadata | undefined;
+            try {
+                metadata = await readRemoteWorldObjectMetadata(
+                    client,
+                    context,
+                    version.versionId,
+                );
+            } catch (error) {
+                const canUseLatestObjectMetadata =
+                    version.isLatest &&
+                    latestObjectMetadata &&
+                    (latestObjectMetadata.pushMetadataRecorded ||
+                        (typeof latestObjectMetadata.versionId === "string" &&
+                            latestObjectMetadata.versionId ===
+                                version.versionId) ||
+                        (typeof latestObjectMetadata.versionId !== "string" &&
+                            typeof version.versionId !== "string"));
+
+                if (canUseLatestObjectMetadata) {
+                    metadata = latestObjectMetadata;
+                } else {
+                    const detail = resolveObjectMetadataFailureDetail(
+                        error,
+                        version.versionId,
+                    );
+                    if (pushMetadataSupport.available) {
+                        pushMetadataSupport = {
+                            available: false,
+                            detail,
+                        };
+                    }
+                    return {
+                        ...version,
+                        pushMetadataRecorded: false,
+                        pushMetadataAvailable: false,
+                        pushMetadataDetail: detail,
+                    } satisfies RemoteWorldVersionEntry;
+                }
+            }
+
+            if (!metadata) {
+                const detail = resolveObjectMetadataFailureDetail(
+                    new Error("MissingMetadata"),
+                    version.versionId,
+                );
+                if (pushMetadataSupport.available) {
+                    pushMetadataSupport = {
+                        available: false,
+                        detail,
+                    };
+                }
+                return {
+                    ...version,
+                    pushMetadataRecorded: false,
+                    pushMetadataAvailable: false,
+                    pushMetadataDetail: detail,
+                } satisfies RemoteWorldVersionEntry;
+            }
+
+            return {
+                ...version,
+                pushMetadataRecorded: metadata?.pushMetadataRecorded ?? false,
+                pushedBy: metadata?.pushedBy,
+                pushedAt: metadata?.pushedAt,
+                pushReason: metadata?.pushReason,
+                pushMetadataAvailable: metadata?.pushMetadataAvailable ?? true,
+                pushMetadataDetail: metadata?.pushMetadataDetail,
+            } satisfies RemoteWorldVersionEntry;
+        }),
+    );
+
+    return {
+        context,
+        versioning,
+        pushMetadataSupport,
+        versions: enrichedVersions,
+    };
+}
+
+function buildMissingTrackedVersionMessage(input: {
+    worldName: string;
+    latestRemoteVersionId?: string;
+}): string {
+    return input.latestRemoteVersionId
+        ? `Project does not track a remote world version for "${input.worldName}". The latest remote version is ${input.latestRemoteVersionId}. Pull that world first or confirm that you want to push without a tracked base version.`
+        : `Project does not track a remote world version for "${input.worldName}". Pull the remote world first or confirm that you want to push without a tracked base version.`;
+}
+
+function buildRemoteFingerprintDriftMessage(input: {
+    worldName: string;
+    trackedVersionId: string;
+}): string {
+    return `Project "${input.worldName}" tracks remote world version ${input.trackedVersionId}, but that pin belongs to a different remote world configuration than the current blr.config.json. Review the remote change and confirm before pushing.`;
+}
+
+function buildRemoteVersionMismatchMessage(input: {
+    worldName: string;
+    trackedVersionId: string;
+    latestRemoteVersionId: string;
+}): string {
+    return `Project "${input.worldName}" tracks remote world version ${input.trackedVersionId}, but the latest remote version is ${input.latestRemoteVersionId}. Pull the latest remote world first or confirm that you want to push over newer remote work.`;
+}
+
+function assertTrackedWorldSafeToPush(input: {
+    worldName: string;
+    tracked: TrackedWorldBinding;
+    latestRemoteVersionId?: string;
+}): void {
+    if (!input.latestRemoteVersionId) {
+        return;
+    }
+
+    if (!input.tracked.entry?.versionId) {
+        throw new WorldPushRemoteConflictError({
+            kind: "missing-tracked-version",
+            worldName: input.worldName,
+            latestRemoteVersionId: input.latestRemoteVersionId,
+            currentRemoteFingerprint: input.tracked.currentFingerprint,
+            message: buildMissingTrackedVersionMessage({
+                worldName: input.worldName,
+                latestRemoteVersionId: input.latestRemoteVersionId,
+            }),
+        });
+    }
+
+    if (!input.tracked.matchesCurrentRemote) {
+        throw new WorldPushRemoteConflictError({
+            kind: "remote-fingerprint-drift",
+            worldName: input.worldName,
+            trackedVersionId: input.tracked.entry.versionId,
+            trackedRemoteFingerprint: input.tracked.entry.remoteFingerprint,
+            latestRemoteVersionId: input.latestRemoteVersionId,
+            currentRemoteFingerprint: input.tracked.currentFingerprint,
+            message: buildRemoteFingerprintDriftMessage({
+                worldName: input.worldName,
+                trackedVersionId: input.tracked.entry.versionId,
+            }),
+        });
+    }
+
+    if (input.tracked.entry.versionId !== input.latestRemoteVersionId) {
+        throw new WorldPushRemoteConflictError({
+            kind: "remote-version-mismatch",
+            worldName: input.worldName,
+            trackedVersionId: input.tracked.entry.versionId,
+            latestRemoteVersionId: input.latestRemoteVersionId,
+            trackedRemoteFingerprint: input.tracked.entry.remoteFingerprint,
+            currentRemoteFingerprint: input.tracked.currentFingerprint,
+            message: buildRemoteVersionMismatchMessage({
+                worldName: input.worldName,
+                trackedVersionId: input.tracked.entry.versionId,
+                latestRemoteVersionId: input.latestRemoteVersionId,
+            }),
+        });
+    }
 }
 
 export async function acquireRemoteWorldLock(
@@ -585,15 +1430,11 @@ export async function pullWorldFromS3(
     config: BlurProject,
     worldName: string,
     options: PullWorldOptions = {},
-): Promise<ResolvedWorldS3Context> {
+): Promise<PullWorldResult> {
     const context = resolveWorldS3Context(projectRoot, config, worldName);
     const client = createS3ClientForWorld(config);
-    const remoteExists = await remoteWorldObjectExists(client, context);
-    if (!remoteExists) {
-        throw new Error(
-            `Remote world object does not exist: s3://${context.bucket}/${context.objectKey}`,
-        );
-    }
+    const versioning = await resolveWorldVersioningStatus(client, context);
+    assertWorldVersioningAvailable(versioning);
 
     let lockHandle: AcquiredWorldLock | undefined;
     if (options.lock !== false) {
@@ -611,12 +1452,47 @@ export async function pullWorldFromS3(
     }
 
     try {
-        const response = await client.send(
-            new GetObjectCommand({
-                Bucket: context.bucket,
-                Key: context.objectKey,
-            }),
-        );
+        let response;
+        try {
+            response = await client.send(
+                new GetObjectCommand({
+                    Bucket: context.bucket,
+                    Key: context.objectKey,
+                    VersionId: options.versionId,
+                }),
+            );
+        } catch (error) {
+            if (
+                error instanceof S3ServiceException &&
+                (error.name === "NotFound" ||
+                    error.name === "NoSuchKey" ||
+                    error.$metadata.httpStatusCode === 404)
+            ) {
+                throw new Error(
+                    `Remote world object does not exist: s3://${context.bucket}/${context.objectKey}`,
+                );
+            }
+
+            throw new Error(
+                buildS3ObjectRequestFailureMessage({
+                    action: "download",
+                    bucket: context.bucket,
+                    key: context.objectKey,
+                    versionId: options.versionId,
+                    label: "remote world object",
+                    requiredPermission: "s3:GetObject",
+                    error,
+                }),
+            );
+        }
+
+        const remoteMetadata = normalizeS3Metadata({
+            VersionId: response.VersionId ?? options.versionId,
+            ETag: response.ETag,
+            LastModified: response.LastModified,
+            ContentLength: response.ContentLength,
+            Metadata: response.Metadata,
+        });
         const payload = await bodyToBuffer(response.Body);
         if (payload.length === 0) {
             throw new Error(
@@ -624,38 +1500,64 @@ export async function pullWorldFromS3(
             );
         }
 
-        await ensureDirectory(context.cacheRoot);
-        await writeFile(context.archivePath, payload);
-        await extractWorldArchive(
-            context.archivePath,
-            context.extractedDirectory,
-        );
-        if (!(await isDirectory(path.join(context.extractedDirectory, "db")))) {
+        const resolvedVersionId =
+            response.VersionId ?? remoteMetadata.versionId ?? options.versionId;
+        if (!resolvedVersionId) {
             throw new Error(
-                `Remote world object does not contain a valid Bedrock world: s3://${context.bucket}/${context.objectKey}`,
+                `Remote world version ID is missing for s3://${context.bucket}/${context.objectKey}.`,
             );
         }
-        await copyDirectory(
-            context.extractedDirectory,
-            context.worldSourceDirectory,
+
+        const archivePath = resolveCachedWorldArchivePath(
+            context,
+            resolvedVersionId,
         );
-        await writeCacheMetadata(context, {
-            backend: "s3",
-            bucket: context.bucket,
-            objectKey: context.objectKey,
-            pulledAt: new Date().toISOString(),
-            bytes: payload.length,
+        const extractedDirectory =
+            resolveTemporaryExtractedWorldDirectory(context);
+
+        await ensureDirectory(context.cacheDirectory);
+        await writeFile(archivePath, payload);
+        await extractWorldArchive(archivePath, extractedDirectory);
+        try {
+            if (!(await isDirectory(path.join(extractedDirectory, "db")))) {
+                throw new Error(
+                    `Remote world object does not contain a valid Bedrock world: s3://${context.bucket}/${context.objectKey}`,
+                );
+            }
+            await copyDirectory(
+                extractedDirectory,
+                context.worldSourceDirectory,
+            );
+        } finally {
+            await removeDirectory(extractedDirectory);
+        }
+        await pruneWorldCacheDirectory(context);
+        await persistTrackedProjectWorldState(projectRoot, context, {
+            versionId: resolvedVersionId,
+        });
+        await markProjectWorldMaterializedFromRemote(projectRoot, {
             worldName,
+            remoteFingerprint: buildTrackedProjectWorldFingerprint({
+                backend: "s3",
+                bucket: context.bucket,
+                endpoint: context.endpoint,
+                objectKey: context.objectKey,
+            }),
+            versionId: resolvedVersionId,
         });
         options.debug?.log("world", "pulled world from s3", {
             worldName,
             bucket: context.bucket,
             objectKey: context.objectKey,
-            archivePath: context.archivePath,
+            versionId: resolvedVersionId,
+            archivePath,
             worldSourceDirectory: context.worldSourceDirectory,
         });
 
-        return context;
+        return {
+            context,
+            versionId: resolvedVersionId,
+        };
     } catch (error) {
         if (lockHandle?.releaseOnFailure) {
             try {
@@ -685,58 +1587,129 @@ export async function pushWorldToS3(
     config: BlurProject,
     worldName: string,
     options: PushWorldOptions = {},
-): Promise<ResolvedWorldS3Context> {
+): Promise<PushWorldResult> {
     const context = resolveWorldS3Context(projectRoot, config, worldName);
     const client = createS3ClientForWorld(config);
-
+    const versioning = await resolveWorldVersioningStatus(client, context);
+    assertWorldVersioningAvailable(versioning);
     await assertValidProjectWorldSource(
         projectRoot,
         context.worldSourcePath,
         `push world "${worldName}"`,
     );
 
-    await acquireRemoteWorldLock(projectRoot, config, worldName, {
-        command: "push",
-        force: options.forceLock,
-        reason: options.reason,
-        debug: options.debug,
-    });
-
-    await createWorldArchive(context.worldSourceDirectory, context.archivePath);
-    const payload = await readFile(context.archivePath);
-    await client.send(
-        new PutObjectCommand({
-            Bucket: context.bucket,
-            Key: context.objectKey,
-            Body: payload,
-            ContentType: "application/zip",
-        }),
-    );
-
-    await writeCacheMetadata(context, {
-        backend: "s3",
-        bucket: context.bucket,
-        objectKey: context.objectKey,
-        pushedAt: new Date().toISOString(),
-        bytes: payload.byteLength,
+    const lockHandle = await acquireRemoteWorldLock(
+        projectRoot,
+        config,
         worldName,
-    });
-
-    options.debug?.log("world", "pushed world to s3", {
-        worldName,
-        bucket: context.bucket,
-        objectKey: context.objectKey,
-        archivePath: context.archivePath,
-        worldSourceDirectory: context.worldSourceDirectory,
-    });
-
-    if (options.unlock ?? true) {
-        await releaseRemoteWorldLock(projectRoot, config, worldName, {
+        {
+            command: "push",
+            force: options.forceLock,
+            reason: options.reason,
             debug: options.debug,
-        });
-    }
+        },
+    );
+    let shouldReleaseLock = true;
 
-    return context;
+    const archivePath = resolveTemporaryWorldArchivePath(context);
+
+    try {
+        const [latestRemote, tracked] = await Promise.all([
+            readRemoteWorldObjectMetadata(client, context),
+            readTrackedWorldBinding(projectRoot, context),
+        ]);
+
+        if (!options.allowRemoteConflict) {
+            assertTrackedWorldSafeToPush({
+                worldName,
+                tracked,
+                latestRemoteVersionId: latestRemote?.versionId,
+            });
+        }
+
+        await createWorldArchive(context.worldSourceDirectory, archivePath);
+        const payload = await readFile(archivePath);
+        const response = await client.send(
+            new PutObjectCommand({
+                Bucket: context.bucket,
+                Key: context.objectKey,
+                Body: payload,
+                ContentType: "application/zip",
+                Metadata: createWorldObjectMetadata({
+                    actor: lockHandle.lock.actor,
+                    projectName: config.project.name,
+                    packageName: config.project.packageName,
+                    cliVersion: lockHandle.lock.cliVersion,
+                    reason: options.reason ?? lockHandle.lock.reason,
+                }),
+            }),
+        );
+        if (!response.VersionId) {
+            throw new Error(
+                `Remote world version ID is missing after pushing s3://${context.bucket}/${context.objectKey}.`,
+            );
+        }
+
+        await persistTrackedProjectWorldState(projectRoot, context, {
+            versionId: response.VersionId,
+        });
+        await markProjectWorldMaterializedFromRemote(projectRoot, {
+            worldName,
+            remoteFingerprint: buildTrackedProjectWorldFingerprint({
+                backend: "s3",
+                bucket: context.bucket,
+                endpoint: context.endpoint,
+                objectKey: context.objectKey,
+            }),
+            versionId: response.VersionId,
+        });
+        options.debug?.log("world", "pushed world to s3", {
+            worldName,
+            bucket: context.bucket,
+            objectKey: context.objectKey,
+            versionId: response.VersionId,
+            archivePath,
+            worldSourceDirectory: context.worldSourceDirectory,
+        });
+        await removeDirectory(archivePath);
+        await pruneWorldCacheDirectory(context);
+
+        if (options.unlock ?? true) {
+            await releaseRemoteWorldLock(projectRoot, config, worldName, {
+                debug: options.debug,
+            });
+        } else {
+            shouldReleaseLock = false;
+        }
+
+        return {
+            context,
+            versioning,
+            versionId: response.VersionId,
+        };
+    } catch (error) {
+        if (shouldReleaseLock && lockHandle.releaseOnFailure) {
+            try {
+                await releaseRemoteWorldLock(projectRoot, config, worldName, {
+                    debug: options.debug,
+                });
+            } catch (unlockError) {
+                options.debug?.log(
+                    "world",
+                    "failed to release remote world lock after push failure",
+                    {
+                        worldName,
+                        error:
+                            unlockError instanceof Error
+                                ? unlockError.message
+                                : String(unlockError),
+                    },
+                );
+            }
+        }
+        await removeDirectory(archivePath);
+        throw error;
+    }
 }
 
 export async function describeWorldStatus(
@@ -770,16 +1743,24 @@ export async function describeWorldStatus(
 
     const context = resolveWorldS3Context(projectRoot, config, worldName);
     const client = createS3ClientForWorld(config);
-    const [lock, remoteObjectExists] = await Promise.all([
-        readRemoteLock(client, context),
-        remoteWorldObjectExists(client, context),
-    ]);
+    const [lock, versioning, latestObject, tracked, materializedRemote] =
+        await Promise.all([
+            readRemoteLock(client, context),
+            resolveWorldVersioningStatus(client, context),
+            readRemoteWorldObjectMetadata(client, context),
+            readTrackedWorldBinding(projectRoot, context),
+            readMaterializedProjectWorldRemoteState(projectRoot, worldName),
+        ]);
+    const remoteObjectExists = Boolean(latestObject);
 
     debug?.log("world", "resolved world status", {
         worldName,
         bucket: context.bucket,
         objectKey: context.objectKey,
         lockKey: context.lockKey,
+        versioning,
+        trackedVersionId: tracked.entry?.versionId,
+        trackedMatchesCurrentRemote: tracked.matchesCurrentRemote,
         remoteObjectExists,
         lockPresent: Boolean(lock.lock),
     });
@@ -803,9 +1784,26 @@ export async function describeWorldStatus(
             forcePathStyle: context.forcePathStyle,
             objectKey: context.objectKey,
             lockKey: context.lockKey,
-            cacheRoot: context.cacheRoot,
-            archivePath: context.archivePath,
-            extractedDirectory: context.extractedDirectory,
+            cacheDirectory: context.cacheDirectory,
+            versioning,
+            latestObject,
+            tracked: tracked.entry
+                ? {
+                      versionId: tracked.entry.versionId,
+                      remoteFingerprint: tracked.entry.remoteFingerprint,
+                      matchesCurrentRemote: tracked.matchesCurrentRemote,
+                  }
+                : undefined,
+            materializedRemote: materializedRemote
+                ? {
+                      versionId: materializedRemote.versionId,
+                      remoteFingerprint: materializedRemote.remoteFingerprint,
+                      materializedAt: materializedRemote.materializedAt,
+                      matchesCurrentRemote:
+                          materializedRemote.remoteFingerprint ===
+                          tracked.currentFingerprint,
+                  }
+                : undefined,
             lock: lock.lock,
             remoteObjectExists,
         },

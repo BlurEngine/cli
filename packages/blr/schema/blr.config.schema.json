@@ -325,6 +325,10 @@
         "gamemode": {
           "type": "string",
           "description": "Default BDS gamemode."
+        },
+        "worldSync": {
+          "$ref": "#/definitions/BlurConfigLocalServerWorldSyncFile",
+          "description": "World sync defaults for `blr dev`."
         }
       },
       "additionalProperties": false,
@@ -333,6 +337,29 @@
     "PermissionLevel": {
       "type": "string",
       "enum": ["visitor", "member", "operator", "custom"]
+    },
+    "BlurConfigLocalServerWorldSyncFile": {
+      "type": "object",
+      "properties": {
+        "projectWorldMode": {
+          "$ref": "#/definitions/WorldSyncProjectMode",
+          "description": "How `blr dev` should reconcile the project world against the remote pinned version."
+        },
+        "runtimeWorldMode": {
+          "$ref": "#/definitions/WorldSyncRuntimeMode",
+          "description": "How `blr dev` should seed the local-server runtime world from the project world."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project-level defaults for `local-server`."
+    },
+    "WorldSyncProjectMode": {
+      "type": "string",
+      "enum": ["prompt", "auto", "manual"]
+    },
+    "WorldSyncRuntimeMode": {
+      "type": "string",
+      "enum": ["prompt", "preserve", "replace", "backup"]
     }
   },
   "$id": "https://blurengine.dev/schema/blr.config.schema.json",

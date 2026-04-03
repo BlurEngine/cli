@@ -53,6 +53,7 @@ type PermissionsEntry = {
 };
 
 type BdsApplyMode = "start" | "reload" | "restart";
+type BdsWorldApplyMode = "sync-if-missing" | "preserve" | "replace";
 type BdsExitListener = (code: number | null) => void;
 const STATUS_CONTROL_C_EXIT = 3221225786;
 
@@ -749,7 +750,7 @@ async function syncProjectWorldSource(
     projectRoot: string,
     config: BlurProject,
     state: ResolvedBdsState,
-    options: { forceReset: boolean; requireWorldSource: boolean },
+    options: { worldMode: BdsWorldApplyMode; requireWorldSource: boolean },
     debug?: DebugLogger,
 ): Promise<void> {
     const hasWorldSource = await exists(state.worldSourceDirectory);
@@ -791,10 +792,14 @@ async function syncProjectWorldSource(
         }
     }
 
-    if (!options.forceReset && (await exists(state.worldDirectory))) {
+    if (
+        options.worldMode === "preserve" ||
+        (options.worldMode === "sync-if-missing" &&
+            (await exists(state.worldDirectory)))
+    ) {
         debug?.log("bds", "preserving existing world", {
             worldDirectory: state.worldDirectory,
-            forceReset: options.forceReset,
+            worldMode: options.worldMode,
         });
         return;
     }
@@ -803,8 +808,80 @@ async function syncProjectWorldSource(
     debug?.log("bds", "copied project world source into runtime world", {
         source: state.worldSourceDirectory,
         destination: state.worldDirectory,
-        forceReset: options.forceReset,
+        worldMode: options.worldMode,
     });
+}
+
+function formatFileSafeIsoTimestamp(date = new Date()): string {
+    return date
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace(/\.\d{3}Z$/, "Z");
+}
+
+function resolveRuntimeWorldBackupDirectory(state: ResolvedBdsState): string {
+    return path.join(state.serverDirectory, "worlds_backups");
+}
+
+function resolveRuntimeWorldBackupPath(
+    state: ResolvedBdsState,
+    timestamp = formatFileSafeIsoTimestamp(),
+): string {
+    return path.join(
+        resolveRuntimeWorldBackupDirectory(state),
+        `${state.worldName}.${timestamp}`,
+    );
+}
+
+export async function backupRuntimeWorldForBdsStartup(
+    state: ResolvedBdsState,
+    debug?: DebugLogger,
+): Promise<string | undefined> {
+    if (!(await exists(state.worldDirectory))) {
+        debug?.log(
+            "bds",
+            "skipped runtime world backup because it is missing",
+            {
+                worldDirectory: state.worldDirectory,
+            },
+        );
+        return undefined;
+    }
+
+    await ensureDirectory(resolveRuntimeWorldBackupDirectory(state));
+    const baseBackupPath = resolveRuntimeWorldBackupPath(state);
+    let backupPath = baseBackupPath;
+    let collisionIndex = 1;
+    while (await exists(backupPath)) {
+        collisionIndex += 1;
+        backupPath = `${baseBackupPath}-${collisionIndex}`;
+    }
+
+    await rename(state.worldDirectory, backupPath);
+    debug?.log("bds", "backed up runtime world before replacement", {
+        worldDirectory: state.worldDirectory,
+        backupPath,
+    });
+    return backupPath;
+}
+
+export async function replaceRuntimeWorldFromProjectSource(
+    projectRoot: string,
+    config: BlurProject,
+    state: ResolvedBdsState,
+    options: { requireWorldSource?: boolean } = {},
+    debug?: DebugLogger,
+): Promise<void> {
+    await syncProjectWorldSource(
+        projectRoot,
+        config,
+        state,
+        {
+            worldMode: "replace",
+            requireWorldSource: options.requireWorldSource ?? true,
+        },
+        debug,
+    );
 }
 
 export async function captureAllowlistFromBds(
@@ -956,7 +1033,7 @@ export async function syncProjectToBds(
     config: BlurProject,
     state: ResolvedBdsState,
     options: {
-        resetWorld: boolean;
+        worldMode: BdsWorldApplyMode;
         requireWorldSource: boolean;
         copyPacks?: PackFeatureSelectionOverride;
         attachPacks?: PackFeatureSelectionOverride;
@@ -964,7 +1041,7 @@ export async function syncProjectToBds(
     debug?: DebugLogger,
 ): Promise<void> {
     debug?.log("bds", "syncing project into BDS", {
-        mode: options.resetWorld ? "reset-world" : "sync",
+        worldMode: options.worldMode,
         serverDirectory: state.serverDirectory,
         worldDirectory: state.worldDirectory,
     });
@@ -973,7 +1050,7 @@ export async function syncProjectToBds(
         config,
         state,
         {
-            forceReset: options.resetWorld,
+            worldMode: options.worldMode,
             requireWorldSource: options.requireWorldSource,
         },
         debug,
@@ -1039,11 +1116,18 @@ export class BdsServerController {
         };
     }
 
-    async apply(mode: BdsApplyMode): Promise<void> {
+    async apply(
+        mode: BdsApplyMode,
+        options: {
+            worldMode?: BdsWorldApplyMode;
+            requireWorldSource?: boolean;
+        } = {},
+    ): Promise<void> {
         this.options.debug?.log("bds", "applying mode", {
             mode,
             running: this.isRunning(),
             worldName: this.worldName,
+            worldMode: options.worldMode,
         });
         const state = await ensureBds(
             this.projectRoot,
@@ -1057,6 +1141,13 @@ export class BdsServerController {
         );
         this.state = state;
 
+        const worldMode =
+            options.worldMode ??
+            (mode === "restart" ? "replace" : "sync-if-missing");
+        const requireWorldSource =
+            options.requireWorldSource ??
+            (mode === "restart" ? worldMode !== "preserve" : false);
+
         if (mode === "restart") {
             await this.stop({ suppressExitNotification: true });
             await syncProjectToBds(
@@ -1064,8 +1155,8 @@ export class BdsServerController {
                 this.config,
                 state,
                 {
-                    resetWorld: true,
-                    requireWorldSource: true,
+                    worldMode,
+                    requireWorldSource,
                     copyPacks: this.options.copyPacks,
                     attachPacks: this.options.attachPacks,
                 },
@@ -1075,14 +1166,13 @@ export class BdsServerController {
             return;
         }
 
-        const shouldBootstrapWorld = !(await exists(state.worldDirectory));
         await syncProjectToBds(
             this.projectRoot,
             this.config,
             state,
             {
-                resetWorld: shouldBootstrapWorld,
-                requireWorldSource: false,
+                worldMode,
+                requireWorldSource,
                 copyPacks: this.options.copyPacks,
                 attachPacks: this.options.attachPacks,
             },

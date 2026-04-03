@@ -30,6 +30,8 @@ import type {
     PermissionLevel,
     VersionTuple,
     WorldBackend,
+    WorldSyncProjectMode,
+    WorldSyncRuntimeMode,
 } from "./types.js";
 import {
     dedupeStrings,
@@ -132,6 +134,27 @@ function ensureWorldBackend(
     return value === "local" || value === "s3" ? value : fallback;
 }
 
+function ensureWorldSyncProjectMode(
+    value: unknown,
+    fallback: WorldSyncProjectMode,
+): WorldSyncProjectMode {
+    return value === "prompt" || value === "auto" || value === "manual"
+        ? value
+        : fallback;
+}
+
+function ensureWorldSyncRuntimeMode(
+    value: unknown,
+    fallback: WorldSyncRuntimeMode,
+): WorldSyncRuntimeMode {
+    return value === "prompt" ||
+        value === "preserve" ||
+        value === "replace" ||
+        value === "backup"
+        ? value
+        : fallback;
+}
+
 function resolvePackFeatureSelection(
     value: unknown,
     fallback: PackFeatureSelection,
@@ -169,6 +192,10 @@ function coerceBlurConfigFile(
     const watch = (dev.watch ?? {}) as Record<string, unknown>;
     const localDeploy = (dev.localDeploy ?? {}) as Record<string, unknown>;
     const localServer = (dev.localServer ?? {}) as Record<string, unknown>;
+    const localServerWorldSync = (localServer.worldSync ?? {}) as Record<
+        string,
+        unknown
+    >;
     const localDeployCopy = (localDeploy.copy ?? {}) as Record<string, unknown>;
     const localServerCopy = (localServer.copy ?? {}) as Record<string, unknown>;
     const localServerAttach = (localServer.attach ?? {}) as Record<
@@ -339,6 +366,16 @@ function coerceBlurConfigFile(
                     "operator",
                 ),
                 gamemode: ensureString(localServer.gamemode, ""),
+                worldSync: {
+                    projectWorldMode: ensureWorldSyncProjectMode(
+                        localServerWorldSync.projectWorldMode,
+                        "prompt",
+                    ),
+                    runtimeWorldMode: ensureWorldSyncRuntimeMode(
+                        localServerWorldSync.runtimeWorldMode,
+                        "prompt",
+                    ),
+                },
             },
         },
     };
@@ -679,6 +716,18 @@ export async function loadBlurConfig(
                 gamemode:
                     ensureString(configFile.dev?.localServer?.gamemode, "") ||
                     "creative",
+                worldSync: {
+                    projectWorldMode: ensureWorldSyncProjectMode(
+                        configFile.dev?.localServer?.worldSync
+                            ?.projectWorldMode,
+                        "prompt",
+                    ),
+                    runtimeWorldMode: ensureWorldSyncRuntimeMode(
+                        configFile.dev?.localServer?.worldSync
+                            ?.runtimeWorldMode,
+                        "prompt",
+                    ),
+                },
             },
         },
         upgrade: {

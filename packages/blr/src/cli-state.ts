@@ -8,9 +8,17 @@ type CliPromptState = {
     silencedChannel?: MinecraftChannel;
 };
 
+type RemoteWorldUpdatePromptState = {
+    worldName: string;
+    remoteFingerprint: string;
+    latestVersionId: string;
+    silencedUntil: string;
+};
+
 type CliStateFile = {
     prompts?: {
         minecraftTargetUpdate?: CliPromptState;
+        remoteWorldUpdates?: RemoteWorldUpdatePromptState[];
     };
 };
 
@@ -102,5 +110,84 @@ export async function clearMinecraftTargetUpdatePromptSilence(
     if (state.prompts && Object.keys(state.prompts).length === 0) {
         delete state.prompts;
     }
+    await writeCliState(projectRoot, state);
+}
+
+function isRemoteWorldUpdatePromptStateMatch(
+    prompt: RemoteWorldUpdatePromptState,
+    input: {
+        worldName: string;
+        remoteFingerprint: string;
+        latestVersionId: string;
+    },
+): boolean {
+    return (
+        prompt.worldName === input.worldName &&
+        prompt.remoteFingerprint === input.remoteFingerprint &&
+        prompt.latestVersionId === input.latestVersionId
+    );
+}
+
+export async function isRemoteWorldUpdatePromptSilenced(
+    projectRoot: string,
+    input: {
+        worldName: string;
+        remoteFingerprint: string;
+        latestVersionId: string;
+        now?: number;
+    },
+): Promise<boolean> {
+    const now = input.now ?? Date.now();
+    const state = await readCliState(projectRoot);
+    const prompts = state.prompts?.remoteWorldUpdates ?? [];
+    if (prompts.length === 0) {
+        return false;
+    }
+
+    let changed = false;
+    const active = prompts.filter((prompt) => {
+        const silencedUntil = Date.parse(prompt.silencedUntil);
+        const keep = Number.isFinite(silencedUntil) && silencedUntil > now;
+        if (!keep) {
+            changed = true;
+        }
+        return keep;
+    });
+
+    if (changed) {
+        state.prompts ??= {};
+        state.prompts.remoteWorldUpdates = active;
+        await writeCliState(projectRoot, state);
+    }
+
+    return active.some((prompt) =>
+        isRemoteWorldUpdatePromptStateMatch(prompt, input),
+    );
+}
+
+export async function silenceRemoteWorldUpdatePrompt(
+    projectRoot: string,
+    input: {
+        worldName: string;
+        remoteFingerprint: string;
+        latestVersionId: string;
+        now?: number;
+    },
+): Promise<void> {
+    const now = input.now ?? Date.now();
+    const state = await readCliState(projectRoot);
+    state.prompts ??= {};
+    const prompts = state.prompts.remoteWorldUpdates ?? [];
+    const nextPrompt: RemoteWorldUpdatePromptState = {
+        worldName: input.worldName,
+        remoteFingerprint: input.remoteFingerprint,
+        latestVersionId: input.latestVersionId,
+        silencedUntil: new Date(
+            now + MINECRAFT_TARGET_UPDATE_SILENCE_MS,
+        ).toISOString(),
+    };
+    state.prompts.remoteWorldUpdates = prompts
+        .filter((prompt) => !isRemoteWorldUpdatePromptStateMatch(prompt, input))
+        .concat(nextPrompt);
     await writeCliState(projectRoot, state);
 }

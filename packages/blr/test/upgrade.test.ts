@@ -76,7 +76,9 @@ test("upgradeProjectScaffold migrates legacy project state and reconciles manage
     const gitIgnore = await readTextFile(path.join(projectRoot, ".gitignore"));
     assert.match(gitIgnore, /# BEGIN MANAGED BY @blurengine\/cli/);
     assert.match(gitIgnore, /coverage\//);
-    assert.match(gitIgnore, /^worlds\/$/m);
+    assert.match(gitIgnore, /^worlds\/\*\*$/m);
+    assert.match(gitIgnore, /^!worlds\/$/m);
+    assert.match(gitIgnore, /^!worlds\/worlds\.json$/m);
 });
 
 test("upgradeProjectScaffold stops on conflicting legacy and server state files", async (t) => {

@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import AdmZip from "adm-zip";
 import {
+    backupRuntimeWorldForBdsStartup,
     bootstrapProjectWorldSourceFromBds,
     ensureBds,
     prefetchBdsArchive,
@@ -488,5 +489,63 @@ test("bootstrapProjectWorldSourceFromBds waits when neither a valid project sour
     assert.equal(
         await pathExists(path.join(worldSourceDirectory, "db")),
         false,
+    );
+});
+
+test("backupRuntimeWorldForBdsStartup moves the runtime world into a timestamped backup folder", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-bds-backup-");
+    const runtimeWorldDirectory = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        "1.26.3.1",
+        "server",
+        "worlds",
+        "Bedrock level",
+    );
+    await mkdir(path.join(runtimeWorldDirectory, "db"), { recursive: true });
+    await writeFile(path.join(runtimeWorldDirectory, "levelname.txt"), "hello");
+
+    const backupPath = await backupRuntimeWorldForBdsStartup({
+        channel: "stable",
+        version: "1.26.3.1",
+        platform: "win",
+        cacheDirectory: path.join(projectRoot, ".blr", "cache", "bds"),
+        serverDirectory: path.join(
+            projectRoot,
+            ".blr",
+            "bds",
+            "1.26.3.1",
+            "server",
+        ),
+        worldName: "Bedrock level",
+        worldSourcePath: "worlds/Bedrock level",
+        worldDirectory: runtimeWorldDirectory,
+        worldSourceDirectory: path.join(projectRoot, "worlds", "Bedrock level"),
+        executablePath: path.join(
+            projectRoot,
+            ".blr",
+            "bds",
+            "1.26.3.1",
+            "server",
+            "bedrock_server.exe",
+        ),
+        zipPath: path.join(
+            projectRoot,
+            ".blr",
+            "cache",
+            "bds",
+            "bedrock-server-1.26.3.1-win.zip",
+        ),
+        customExecutableInjected: false,
+    });
+
+    assert.ok(backupPath);
+    assert.equal(await pathExists(runtimeWorldDirectory), false);
+    assert.equal(await pathExists(backupPath), true);
+    assert.match(path.basename(backupPath), /^Bedrock level\.\d{8}T\d{6}Z$/);
+    assert.equal(
+        await readFile(path.join(backupPath, "levelname.txt"), "utf8"),
+        "hello",
     );
 });

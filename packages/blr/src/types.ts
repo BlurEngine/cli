@@ -5,6 +5,8 @@ export type Language = "ts" | "js";
 export type VersionTuple = [number, number, number];
 export type WorldBackend = "local" | "s3";
 export type MinecraftChannel = "stable" | "preview";
+export type WorldSyncProjectMode = "prompt" | "auto" | "manual";
+export type WorldSyncRuntimeMode = "prompt" | "preserve" | "replace" | "backup";
 
 export type MinecraftProduct =
     | "BedrockGDK"
@@ -201,6 +203,20 @@ export interface BlurConfigLocalDeployFile {
 /**
  * Project-level defaults for `local-server`.
  */
+export interface BlurConfigLocalServerWorldSyncFile {
+    /**
+     * How `blr dev` should reconcile the project world against the remote pinned version.
+     */
+    projectWorldMode?: WorldSyncProjectMode;
+    /**
+     * How `blr dev` should seed the local-server runtime world from the project world.
+     */
+    runtimeWorldMode?: WorldSyncRuntimeMode;
+}
+
+/**
+ * Project-level defaults for `local-server`.
+ */
 export interface BlurConfigLocalServerFile {
     /**
      * Whether `local-server` starts selected by default.
@@ -242,6 +258,10 @@ export interface BlurConfigLocalServerFile {
      * Default BDS gamemode.
      */
     gamemode?: string;
+    /**
+     * World sync defaults for `blr dev`.
+     */
+    worldSync?: BlurConfigLocalServerWorldSyncFile;
 }
 
 /**
@@ -396,6 +416,10 @@ export interface BlurProject {
             operators: string[];
             defaultPermissionLevel: PermissionLevel;
             gamemode: string;
+            worldSync: {
+                projectWorldMode: WorldSyncProjectMode;
+                runtimeWorldMode: WorldSyncRuntimeMode;
+            };
         };
     };
     upgrade: {

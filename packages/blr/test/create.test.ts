@@ -88,7 +88,9 @@ test("built cli create scaffolds a scripting project with bebe enabled by defaul
         await exists(path.join(projectRoot, "AGENTS.project.md")),
         true,
     );
-    assert.match(gitIgnore, /^worlds\/$/m);
+    assert.match(gitIgnore, /^worlds\/\*\*$/m);
+    assert.match(gitIgnore, /^!worlds\/$/m);
+    assert.match(gitIgnore, /^!worlds\/worlds\.json$/m);
 
     const behaviorPackDirectories = await listDirectories(
         path.join(projectRoot, "behavior_packs"),
@@ -196,7 +198,9 @@ test("built cli create keeps a resource-only scaffold minimal", async (t) => {
     assert.match(readme, /^# resource-only/m);
     assert.match(readme, /pnpm run build/);
     assert.match(readme, /pnpm run system/);
-    assert.match(gitIgnore, /^worlds\/$/m);
+    assert.match(gitIgnore, /^worlds\/\*\*$/m);
+    assert.match(gitIgnore, /^!worlds\/$/m);
+    assert.match(gitIgnore, /^!worlds\/worlds\.json$/m);
     assert.doesNotMatch(readme, /behavior_packs\//);
     assert.match(readme, /resource_packs\//);
 });

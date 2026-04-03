@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
+import { loadBlurConfig } from "../src/config.js";
 import { BLR_ENV_BDS_VERSION } from "../src/constants.js";
 import {
+    buildRemoteWorldSyncFailureMessage,
     resolveDevLocalServerVersionSource,
     shouldUseInteractiveDevConfiguration,
 } from "../src/commands/dev.js";
@@ -26,6 +29,45 @@ function preserveEnv(t: TestContext, name: string): void {
         }
         process.env[name] = previousValue;
     });
+}
+
+async function createConfigLoadProject(
+    projectRoot: string,
+    config: Record<string, unknown>,
+): Promise<void> {
+    await mkdir(path.join(projectRoot, "behavior_packs", "example-pack"), {
+        recursive: true,
+    });
+    await writeJsonFile(path.join(projectRoot, "package.json"), {
+        name: "example-project",
+        private: true,
+    });
+    await writeJsonFile(
+        path.join(
+            projectRoot,
+            "behavior_packs",
+            "example-pack",
+            "manifest.json",
+        ),
+        {
+            format_version: 2,
+            header: {
+                name: "Example",
+                description: "Example behavior pack",
+                uuid: "11111111-1111-1111-1111-111111111111",
+                version: [0, 1, 0],
+                min_engine_version: [1, 26, 0],
+            },
+            modules: [
+                {
+                    type: "data",
+                    uuid: "22222222-2222-2222-2222-222222222222",
+                    version: [0, 1, 0],
+                },
+            ],
+        },
+    );
+    await writeJsonFile(path.join(projectRoot, "blr.config.json"), config);
 }
 
 test("shouldUseInteractiveDevConfiguration is disabled by default", () => {
@@ -127,5 +169,61 @@ test("resolveDevLocalServerVersionSource reports cli bdsVersion when --bds-versi
             bdsVersion: "1.26.13.1",
         }),
         "cli-bds-version",
+    );
+});
+
+test("loadBlurConfig defaults local-server worldSync modes to prompt", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-dev-world-sync-");
+    await createConfigLoadProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.dev.localServer.worldSync.projectWorldMode, "prompt");
+    assert.equal(config.dev.localServer.worldSync.runtimeWorldMode, "prompt");
+});
+
+test("loadBlurConfig respects configured local-server worldSync modes", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-dev-world-sync-configured-",
+    );
+    await createConfigLoadProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        dev: {
+            localServer: {
+                worldSync: {
+                    projectWorldMode: "auto",
+                    runtimeWorldMode: "backup",
+                },
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.dev.localServer.worldSync.projectWorldMode, "auto");
+    assert.equal(config.dev.localServer.worldSync.runtimeWorldMode, "backup");
+});
+
+test("buildRemoteWorldSyncFailureMessage replaces raw unknown backend errors with a helpful dev warning", () => {
+    assert.match(
+        buildRemoteWorldSyncFailureMessage({
+            worldName: "Bedrock level",
+            error: new Error("UnknownError"),
+        }),
+        /could not synchronize remote world "Bedrock level" because the S3 backend returned an unknown error/i,
+    );
+    assert.match(
+        buildRemoteWorldSyncFailureMessage({
+            worldName: "Bedrock level",
+            error: new Error(
+                "blr could not inspect remote world object s3://mpl-worlds/worlds/Bedrock level.zip because the S3 backend returned an unknown error. This backend may not fully support this request, or the active credentials may not allow it.",
+            ),
+        }),
+        /Continuing without remote world sync\./,
     );
 });

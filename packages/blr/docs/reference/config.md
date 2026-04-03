@@ -23,7 +23,7 @@ Canonical build and package output belongs under `dist/`:
 
 CLI runtime/provisioning state belongs under `.blr/`.
 
-Prompt-silence state for interactive convenience flows also belongs under `.blr/`, currently in `.blr/state/cli.json`.
+Interactive prompt silence and internal world sync state both live under `.blr/state/`.
 
 ## Default Minimal File
 
@@ -190,8 +190,41 @@ Notes:
 - if `projectPrefix` is enabled, the layout becomes:
   - `<keyPrefix>/<projectName>/<worldName>.zip`
   - `<keyPrefix>/<projectName>/<worldName>.lock.json`
+- bucket versioning is required for versioned remote world workflows:
+  - `blr world pull`
+  - `blr world versions`
+  - `blr world pull --version-id`
+  - `blr world push`
+  - remote world sync behavior in `blr dev`
+- `blr world list` and `blr world status` still work when bucket versioning is unavailable
 - the lock object is the concurrency boundary; world naming is no longer overloaded with hashes
-- `blr dev` and `blr package` consume the local project world source; use `blr world pull` to materialize a remote world locally first when needed
+- `blr dev` and `blr package` consume the local project world source
+- successful versioned remote world pull and push operations create or refresh `worlds/worlds.json`
+- `worlds/worlds.json` only appears after `blr world` establishes remote version state; generated projects do not create it up front
+- tracked world entries store:
+  - `name`
+  - `remoteFingerprint`
+  - `versionId`
+- `blr world push` also writes BlurEngine provenance onto the uploaded object by using standard S3 user metadata through the SDK `Metadata` field
+- that provenance can include who pushed the world and the optional push reason
+- this is not AWS-only naming; S3-compatible providers that preserve object metadata can expose the same information
+- if a provider strips or does not return that metadata, `blr` treats push provenance as unavailable and says so in command output
+- `remoteFingerprint` lets `blr` detect when the current `blr.config.json` points at a different remote world lineage than the stored project pin
+- if that fingerprint drifts, `blr` ignores the stale pin until the next successful remote world action refreshes it
+- internal runtime bookkeeping lives in `.blr/state/world-state.json`
+- that internal state tracks:
+  - the last remote version materialized into the project world
+  - the last project-world source seeded into the local-server runtime world
+  - the active local-server watch-world session, when present
+- `.blr/cache/worlds/` now keeps only downloaded zip archives:
+  - `.blr/cache/worlds/<bucket>/<worldName>/<encodedVersionId>.zip`
+- temporary extracted world copies and cache `metadata.json` are not kept after a pull
+- version-aware world sync is not supported without bucket versioning:
+  - `blr world pull`
+  - `blr world versions`
+  - `blr world push`
+  - `blr dev` project-world remote sync
+- `blr dev` stays lenient about local world edits and uses `worlds/worlds.json` as the project truth instead of trying to infer remote freshness from local files alone
 
 ### `package`
 
@@ -316,6 +349,8 @@ Fields:
 - `operators`: optional XUID list when no `server/permissions.json` file exists
 - `defaultPermissionLevel`: server default permission level
 - `gamemode`: server default gamemode
+- `worldSync.projectWorldMode`: `prompt | auto | manual`
+- `worldSync.runtimeWorldMode`: `prompt | preserve | replace | backup`
 
 Defaults if omitted:
 
@@ -329,6 +364,8 @@ Defaults if omitted:
 - `attach.resourcePack`: follows project feature presence
 - `defaultPermissionLevel`: `operator`
 - `gamemode`: `creative`
+- `worldSync.projectWorldMode`: `prompt`
+- `worldSync.runtimeWorldMode`: `prompt`
 
 Notes:
 
@@ -340,6 +377,18 @@ Notes:
 - `copy.*` controls whether the current project pack types are copied into the runtime server
 - `attach.*` controls whether the current project pack ids are written into world hook files
 - if a pack type is disabled for copy or attach, `blr` removes only this project's corresponding staged/runtime output and preserves unrelated existing world pack entries
+- `worldSync.projectWorldMode` controls how `blr dev` handles remote project-world updates for versioned S3 worlds:
+  - `prompt`: prompt when a newer remote world exists, and prompt or fail when a required pull is needed
+  - `auto`: pull automatically when reconciliation is needed
+  - `manual`: never pull automatically
+- `worldSync.runtimeWorldMode` controls how `blr dev` handles replacing the runtime BDS world from the project world:
+  - `prompt`: ask before replacing an existing runtime world
+  - `preserve`: keep the existing runtime world
+  - `replace`: replace the runtime world automatically before startup
+  - `backup`: move the existing runtime world into `worlds_backups/` and then replace it
+- runtime-world replacement and backup only happen before BDS starts; `blr` does not modify a running server world
+- `watch-world` starts after startup reconciliation and captures runtime world state back into the project source
+- optional newer-remote prompts can be silenced for 24 hours on a per-world basis
 - per-run CLI overrides:
   - `--local-server-behavior-pack`
   - `--local-server-resource-pack`
@@ -387,6 +436,8 @@ Config-backed overrides:
   - `minecraft.channel` -> `BLR_MINECRAFT_CHANNEL`
   - `minecraft.targetVersion` -> `BLR_MINECRAFT_TARGETVERSION`
   - `dev.localServer.worldName` -> `BLR_DEV_LOCALSERVER_WORLDNAME`
+  - `dev.localServer.worldSync.projectWorldMode` -> `BLR_DEV_LOCALSERVER_WORLDSYNC_PROJECTWORLDMODE`
+  - `dev.localServer.worldSync.runtimeWorldMode` -> `BLR_DEV_LOCALSERVER_WORLDSYNC_RUNTIMEWORLDMODE`
   - `dev.localDeploy.copy.behaviorPack` -> `BLR_DEV_LOCALDEPLOY_COPY_BEHAVIORPACK`
   - `dev.localServer.attach.resourcePack` -> `BLR_DEV_LOCALSERVER_ATTACH_RESOURCEPACK`
   - `package.worldTemplate.include.behaviorPack` -> `BLR_PACKAGE_WORLDTEMPLATE_INCLUDE_BEHAVIORPACK`

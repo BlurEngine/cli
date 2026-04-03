@@ -17,12 +17,14 @@ import {
 import { runUpgradeCommand } from "./commands/upgrade.js";
 import {
     runWorldCaptureCommand,
+    runWorldListCommand,
     runWorldLockCommand,
     runWorldPullCommand,
     runWorldPushCommand,
     runWorldStatusCommand,
     runWorldUnlockCommand,
     runWorldUseCommand,
+    runWorldVersionsCommand,
 } from "./commands/world.js";
 import { isPromptCancelledError } from "./prompt.js";
 
@@ -402,7 +404,7 @@ async function main(): Promise<void> {
         .description("Set the active project world in blr.config.json.")
         .argument(
             "[worldName]",
-            "World name. Defaults to dev.localServer.worldName",
+            "World name. If omitted, blr prompts interactively when possible and otherwise falls back to dev.localServer.worldName",
         )
         .option(
             "--debug [enabled]",
@@ -417,6 +419,23 @@ async function main(): Promise<void> {
                 await runWorldUseCommand(worldName, opts as any);
             },
         );
+
+    world
+        .command("list")
+        .description("List remote worlds from the configured S3 backend.")
+        .option(
+            "--json [enabled]",
+            "Print JSON output for scripting",
+            parseOptionalBoolean,
+        )
+        .option(
+            "--debug [enabled]",
+            "Enable or disable debug logs for world backend activity",
+            parseOptionalBoolean,
+        )
+        .action(async (opts: Record<string, unknown>) => {
+            await runWorldListCommand(opts as any);
+        });
 
     world
         .command("status")
@@ -442,9 +461,37 @@ async function main(): Promise<void> {
         );
 
     world
+        .command("versions")
+        .description(
+            "List remote object versions for the selected world when bucket versioning is enabled.",
+        )
+        .argument(
+            "[worldName]",
+            "World name. Defaults to dev.localServer.worldName",
+        )
+        .option(
+            "--json [enabled]",
+            "Print JSON output for scripting",
+            parseOptionalBoolean,
+        )
+        .option(
+            "--debug [enabled]",
+            "Enable or disable debug logs for world backend activity",
+            parseOptionalBoolean,
+        )
+        .action(
+            async (
+                worldName: string | undefined,
+                opts: Record<string, unknown>,
+            ) => {
+                await runWorldVersionsCommand(worldName, opts as any);
+            },
+        );
+
+    world
         .command("pull")
         .description(
-            "Pull a world from the configured remote backend into the project world source.",
+            "Pull a versioned remote world from the configured S3 backend into the project world source.",
         )
         .argument(
             "[worldName]",
@@ -463,6 +510,10 @@ async function main(): Promise<void> {
         .option(
             "--reason <reason>",
             "Optional lock reason recorded in remote lock metadata",
+        )
+        .option(
+            "--version-id <versionId>",
+            "Pull a specific remote object version when bucket versioning is enabled",
         )
         .option(
             "--debug [enabled]",
@@ -525,7 +576,7 @@ async function main(): Promise<void> {
     world
         .command("push")
         .description(
-            "Push the project world source to the configured remote backend.",
+            "Push the project world source to the configured versioned S3 backend.",
         )
         .argument(
             "[worldName]",

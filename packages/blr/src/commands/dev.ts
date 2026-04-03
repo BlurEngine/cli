@@ -1,18 +1,23 @@
 import chokidar, { type FSWatcher } from "chokidar";
+import { stat } from "node:fs/promises";
 import picomatch from "picomatch";
 import {
     BdsServerController,
+    backupRuntimeWorldForBdsStartup,
     bootstrapProjectWorldSourceFromBds,
     captureAllowlistFromBds,
     captureWorldSourceFromBds,
     prefetchBdsArchive,
+    replaceRuntimeWorldFromProjectSource,
     resolveBdsRuntimeState,
     type BdsProvisionReporter,
 } from "../bds.js";
 import {
     clearMinecraftTargetUpdatePromptSilence,
     isMinecraftTargetUpdatePromptSilenced,
+    isRemoteWorldUpdatePromptSilenced,
     silenceMinecraftTargetUpdatePrompt,
+    silenceRemoteWorldUpdatePrompt,
 } from "../cli-state.js";
 import { resolvePackFeatureSelection } from "../content.js";
 import { loadBlurConfig } from "../config.js";
@@ -28,9 +33,23 @@ import {
     resolveMinecraftArtifactStatus,
     resolveMinecraftVersionStatus,
 } from "../minecraft-version.js";
+import { buildTrackedProjectWorldFingerprint } from "../project-world-state.js";
 import { runPrompt } from "../prompt.js";
 import { buildProject, runLocalDeploy } from "../runtime.js";
 import type { BlurProject } from "../types.js";
+import {
+    clearLocalServerSession,
+    clearRuntimeWorldSeedState,
+    readRuntimeWorldSeedState,
+    writeLocalServerSession,
+    writeRuntimeWorldSeedState,
+} from "../world-internal-state.js";
+import { computeProjectWorldSourceIdentity } from "../world-source-identity.js";
+import {
+    describeWorldStatus,
+    pullWorldFromS3,
+    type WorldStatus,
+} from "../world-backend.js";
 import { resolveSelectedWorld } from "../world.js";
 
 type DevCommandOptions = {
@@ -224,6 +243,654 @@ export async function resolveDevLocalServerVersionSource(
             return "config-file-target-version";
         default:
             return "default-target-version";
+    }
+}
+
+function canPromptForDevWorldSync(): boolean {
+    return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+function buildRemoteWorldVersioningUnavailableMessage(options: {
+    worldName: string;
+    detail?: string;
+}): string {
+    const detail =
+        options.detail?.trim() ||
+        `Remote world versioning is unavailable for "${options.worldName}".`;
+    return `[dev] ${detail}`;
+}
+
+function buildRemoteWorldTrackingDriftMessage(options: {
+    worldName: string;
+    trackedVersionId: string;
+}): string {
+    return `[dev] "${options.worldName}" tracks version ${options.trackedVersionId}, but that pin belongs to a different remote. Run "blr world pull ${options.worldName}" to establish tracking for the current remote.`;
+}
+
+function buildOptionalRemoteWorldUpdateMessage(options: {
+    worldName: string;
+    currentVersionId: string;
+    latestVersionId: string;
+}): string {
+    return `[dev] Newer remote world available for "${options.worldName}". Current: ${options.currentVersionId}. Latest: ${options.latestVersionId}.`;
+}
+
+function buildRequiredProjectWorldMissingMessage(options: {
+    worldName: string;
+    versionLabel: string;
+}): string {
+    return `[dev] Project world "${options.worldName}" is missing and must be pulled (${options.versionLabel}).`;
+}
+
+function buildRemoteWorldSyncErrorDetail(options: {
+    worldName: string;
+    error: unknown;
+}): string {
+    const rawMessage =
+        options.error instanceof Error
+            ? options.error.message.trim()
+            : String(options.error).trim();
+
+    if (
+        rawMessage.length === 0 ||
+        rawMessage === "UnknownError" ||
+        rawMessage === "Error: UnknownError"
+    ) {
+        return `blr could not synchronize remote world "${options.worldName}" because the S3 backend returned an unknown error. Check the S3 backend compatibility and permissions, or run "blr world status ${options.worldName}" for more detail.`;
+    }
+
+    return `blr could not synchronize remote world "${options.worldName}". ${rawMessage}`;
+}
+
+export function buildRemoteWorldSyncFailureMessage(options: {
+    worldName: string;
+    error: unknown;
+    continuing?: boolean;
+}): string {
+    const detail = buildRemoteWorldSyncErrorDetail(options);
+    return options.continuing === false
+        ? `[dev] ${detail}`
+        : `[dev] ${detail} Continuing without remote world sync.`;
+}
+
+function resolveCurrentRemoteWorldFingerprint(
+    status: NonNullable<WorldStatus["s3"]>,
+): string {
+    return buildTrackedProjectWorldFingerprint({
+        backend: "s3",
+        bucket: status.bucket,
+        endpoint: status.endpoint,
+        objectKey: status.objectKey,
+    });
+}
+
+async function pullRemoteWorldForDev(options: {
+    projectRoot: string;
+    config: BlurProject;
+    worldName: string;
+    versionId: string;
+    debug: ReturnType<typeof createDebugLogger>;
+}): Promise<void> {
+    try {
+        await pullWorldFromS3(
+            options.projectRoot,
+            options.config,
+            options.worldName,
+            {
+                lock: false,
+                versionId: options.versionId,
+                debug: options.debug,
+            },
+        );
+    } catch (error) {
+        throw new Error(
+            buildRemoteWorldSyncErrorDetail({
+                worldName: options.worldName,
+                error,
+            }),
+        );
+    }
+}
+
+async function promptForOptionalRemoteWorldUpdate(options: {
+    projectRoot: string;
+    worldName: string;
+    currentVersionId: string;
+    latestVersionId: string;
+    remoteFingerprint: string;
+}): Promise<"pull-latest" | "keep-current" | "silence"> {
+    if (
+        await isRemoteWorldUpdatePromptSilenced(options.projectRoot, {
+            worldName: options.worldName,
+            remoteFingerprint: options.remoteFingerprint,
+            latestVersionId: options.latestVersionId,
+        })
+    ) {
+        return "keep-current";
+    }
+
+    const result = await runPrompt({
+        type: "select",
+        name: "remoteWorldUpdateChoice",
+        message: [
+            "Newer remote world found",
+            `Current: ${options.currentVersionId}`,
+            `Latest: ${options.latestVersionId}`,
+            "Choose an action:",
+        ].join("\n"),
+        choices: [
+            {
+                title: "Pull latest remote world",
+                value: "pull-latest",
+            },
+            {
+                title: "Keep current world",
+                value: "keep-current",
+            },
+            {
+                title: "Silence 24h",
+                value: "silence",
+            },
+        ],
+        initial: 0,
+        hint: "- Use arrow keys. Enter to confirm.",
+        instructions: false,
+    });
+    const choice = result.remoteWorldUpdateChoice as
+        | "pull-latest"
+        | "keep-current"
+        | "silence";
+    if (choice === "silence") {
+        await silenceRemoteWorldUpdatePrompt(options.projectRoot, {
+            worldName: options.worldName,
+            remoteFingerprint: options.remoteFingerprint,
+            latestVersionId: options.latestVersionId,
+        });
+    }
+    return choice;
+}
+
+async function promptForRequiredProjectWorldPull(options: {
+    worldName: string;
+    versionId: string;
+    latest: boolean;
+}): Promise<boolean> {
+    const result = await runPrompt({
+        type: "select",
+        name: "requiredRemoteWorldChoice",
+        message: [
+            "Project world missing",
+            `${options.latest ? "Latest" : "Pinned"}: ${options.versionId}`,
+            "Choose an action:",
+        ].join("\n"),
+        choices: [
+            {
+                title: options.latest
+                    ? "Pull latest remote world"
+                    : "Pull pinned world",
+                value: "pull",
+            },
+            {
+                title: "Exit",
+                value: "exit",
+            },
+        ],
+        initial: 0,
+        hint: "- Use arrow keys. Enter to confirm.",
+        instructions: false,
+    });
+    return (result.requiredRemoteWorldChoice as string | undefined) === "pull";
+}
+
+async function syncRemoteWorldForDev(options: {
+    projectRoot: string;
+    config: BlurProject;
+    worldName: string;
+    debug: ReturnType<typeof createDebugLogger>;
+}): Promise<void> {
+    const status = await describeWorldStatus(
+        options.projectRoot,
+        options.config,
+        options.worldName,
+        options.debug,
+    );
+    if (
+        status.backend !== "s3" ||
+        !status.s3 ||
+        !status.s3.remoteObjectExists
+    ) {
+        return;
+    }
+
+    const currentRemoteFingerprint = resolveCurrentRemoteWorldFingerprint(
+        status.s3,
+    );
+    const trackedVersionId = status.s3.tracked?.versionId;
+    const trackedMatchesCurrentRemote =
+        status.s3.tracked?.matchesCurrentRemote ?? false;
+    const latestVersionId = status.s3.latestObject?.versionId;
+    const projectWorldMode =
+        options.config.dev.localServer.worldSync.projectWorldMode;
+    const canPrompt = canPromptForDevWorldSync();
+
+    if (!status.s3.versioning.available) {
+        const message = buildRemoteWorldVersioningUnavailableMessage({
+            worldName: options.worldName,
+            detail: status.s3.versioning.detail,
+        });
+        if (
+            trackedVersionId &&
+            trackedMatchesCurrentRemote &&
+            !status.local.valid
+        ) {
+            throw new Error(
+                `${message} blr cannot pull the pinned world without remote versioning.`,
+            );
+        }
+        console.log(message);
+        return;
+    }
+
+    if (
+        trackedVersionId &&
+        trackedMatchesCurrentRemote &&
+        !status.local.valid
+    ) {
+        if (projectWorldMode === "manual") {
+            throw new Error(
+                `${buildRequiredProjectWorldMissingMessage({
+                    worldName: options.worldName,
+                    versionLabel: `pinned ${trackedVersionId}`,
+                })} Run "blr world pull ${options.worldName}" first, or change dev.localServer.worldSync.projectWorldMode.`,
+            );
+        }
+
+        if (projectWorldMode === "prompt") {
+            if (!canPrompt) {
+                throw new Error(
+                    `${buildRequiredProjectWorldMissingMessage({
+                        worldName: options.worldName,
+                        versionLabel: `pinned ${trackedVersionId}`,
+                    })} Re-run in an interactive terminal or change dev.localServer.worldSync.projectWorldMode.`,
+                );
+            }
+            const shouldPull = await promptForRequiredProjectWorldPull({
+                worldName: options.worldName,
+                versionId: trackedVersionId,
+                latest: false,
+            });
+            if (!shouldPull) {
+                throw new Error(
+                    buildRequiredProjectWorldMissingMessage({
+                        worldName: options.worldName,
+                        versionLabel: `pinned ${trackedVersionId}`,
+                    }),
+                );
+            }
+        }
+
+        await pullRemoteWorldForDev({
+            projectRoot: options.projectRoot,
+            config: options.config,
+            worldName: options.worldName,
+            versionId: trackedVersionId,
+            debug: options.debug,
+        });
+        console.log(`[dev] Pulled pinned world for "${options.worldName}".`);
+        return;
+    }
+
+    if (trackedVersionId && !trackedMatchesCurrentRemote) {
+        if (!status.local.valid) {
+            if (!latestVersionId) {
+                throw new Error(
+                    `[dev] Project world "${options.worldName}" is missing and the current remote has no latest version to pull.`,
+                );
+            }
+
+            if (projectWorldMode === "manual") {
+                throw new Error(
+                    `${buildRequiredProjectWorldMissingMessage({
+                        worldName: options.worldName,
+                        versionLabel: `latest ${latestVersionId}`,
+                    })} The tracked pin belongs to a different remote, so blr cannot recover the project world automatically.`,
+                );
+            }
+
+            if (projectWorldMode === "prompt") {
+                if (!canPrompt) {
+                    throw new Error(
+                        `${buildRequiredProjectWorldMissingMessage({
+                            worldName: options.worldName,
+                            versionLabel: `latest ${latestVersionId}`,
+                        })} Re-run in an interactive terminal or change dev.localServer.worldSync.projectWorldMode.`,
+                    );
+                }
+                const shouldPull = await promptForRequiredProjectWorldPull({
+                    worldName: options.worldName,
+                    versionId: latestVersionId,
+                    latest: true,
+                });
+                if (!shouldPull) {
+                    throw new Error(
+                        buildRequiredProjectWorldMissingMessage({
+                            worldName: options.worldName,
+                            versionLabel: `latest ${latestVersionId}`,
+                        }),
+                    );
+                }
+            }
+
+            await pullRemoteWorldForDev({
+                projectRoot: options.projectRoot,
+                config: options.config,
+                worldName: options.worldName,
+                versionId: latestVersionId,
+                debug: options.debug,
+            });
+            console.log(
+                `[dev] Pulled latest remote world for "${options.worldName}".`,
+            );
+            return;
+        }
+
+        console.log(
+            buildRemoteWorldTrackingDriftMessage({
+                worldName: options.worldName,
+                trackedVersionId,
+            }),
+        );
+        return;
+    }
+
+    if (
+        !trackedVersionId ||
+        !latestVersionId ||
+        trackedVersionId === latestVersionId
+    ) {
+        return;
+    }
+
+    switch (projectWorldMode) {
+        case "auto":
+            await pullRemoteWorldForDev({
+                projectRoot: options.projectRoot,
+                config: options.config,
+                worldName: options.worldName,
+                versionId: latestVersionId,
+                debug: options.debug,
+            });
+            console.log(
+                `[dev] Pulled latest remote world for "${options.worldName}".`,
+            );
+            return;
+        case "manual":
+            console.log(
+                buildOptionalRemoteWorldUpdateMessage({
+                    worldName: options.worldName,
+                    currentVersionId: trackedVersionId,
+                    latestVersionId,
+                }),
+            );
+            return;
+        case "prompt":
+        default:
+            if (!canPrompt) {
+                console.log(
+                    buildOptionalRemoteWorldUpdateMessage({
+                        worldName: options.worldName,
+                        currentVersionId: trackedVersionId,
+                        latestVersionId,
+                    }),
+                );
+                return;
+            }
+
+            switch (
+                await promptForOptionalRemoteWorldUpdate({
+                    projectRoot: options.projectRoot,
+                    worldName: options.worldName,
+                    currentVersionId: trackedVersionId,
+                    latestVersionId,
+                    remoteFingerprint: currentRemoteFingerprint,
+                })
+            ) {
+                case "pull-latest":
+                    await pullRemoteWorldForDev({
+                        projectRoot: options.projectRoot,
+                        config: options.config,
+                        worldName: options.worldName,
+                        versionId: latestVersionId,
+                        debug: options.debug,
+                    });
+                    console.log(
+                        `[dev] Pulled latest remote world for "${options.worldName}".`,
+                    );
+                    return;
+                case "silence":
+                case "keep-current":
+                default:
+                    return;
+            }
+    }
+}
+
+type RuntimeWorldDecision =
+    | {
+          action: "none";
+          sourceIdentity?: string;
+          note?: string;
+      }
+    | {
+          action:
+              | "copy-missing"
+              | "replace"
+              | "backup-and-replace"
+              | "preserve";
+          sourceIdentity: string;
+          note?: string;
+      };
+
+async function promptForRuntimeWorldAction(): Promise<
+    "replace" | "keep" | "backup"
+> {
+    const result = await runPrompt({
+        type: "select",
+        name: "runtimeWorldChoice",
+        message: ["Replace local-server world?", "Choose an action:"].join(
+            "\n",
+        ),
+        choices: [
+            {
+                title: "Replace local-server world",
+                value: "replace",
+            },
+            {
+                title: "Keep local-server world",
+                value: "keep",
+            },
+            {
+                title: "Backup and replace",
+                value: "backup",
+            },
+        ],
+        initial: 0,
+        hint: "- Use arrow keys. Enter to confirm.",
+        instructions: false,
+    });
+    return result.runtimeWorldChoice as "replace" | "keep" | "backup";
+}
+
+async function resolveRuntimeWorldDecision(options: {
+    projectRoot: string;
+    config: BlurProject;
+    runtimeState: ReturnType<typeof resolveBdsRuntimeState>;
+}): Promise<RuntimeWorldDecision> {
+    const runtimeExists = await stat(options.runtimeState.worldDirectory)
+        .then((entry) => entry.isDirectory())
+        .catch(() => false);
+    const sourceIdentity = await computeProjectWorldSourceIdentity(
+        options.runtimeState.worldSourceDirectory,
+    );
+
+    if (!sourceIdentity) {
+        if (!runtimeExists) {
+            await clearRuntimeWorldSeedState(
+                options.projectRoot,
+                options.runtimeState.worldName,
+            );
+        }
+        return {
+            action: "none",
+        };
+    }
+
+    if (!runtimeExists) {
+        return {
+            action: "copy-missing",
+            sourceIdentity,
+        };
+    }
+
+    const lastRuntimeSeed = await readRuntimeWorldSeedState(
+        options.projectRoot,
+        options.runtimeState.worldName,
+    );
+    if (lastRuntimeSeed?.sourceIdentity === sourceIdentity) {
+        return {
+            action: "preserve",
+            sourceIdentity,
+        };
+    }
+
+    const runtimeWorldMode =
+        options.config.dev.localServer.worldSync.runtimeWorldMode;
+    switch (runtimeWorldMode) {
+        case "preserve":
+            return {
+                action: "preserve",
+                sourceIdentity,
+                note: `[dev] Kept existing local-server world for "${options.runtimeState.worldName}".`,
+            };
+        case "replace":
+            return {
+                action: "replace",
+                sourceIdentity,
+            };
+        case "backup":
+            return {
+                action: "backup-and-replace",
+                sourceIdentity,
+            };
+        case "prompt":
+        default:
+            if (!canPromptForDevWorldSync()) {
+                return {
+                    action: "preserve",
+                    sourceIdentity,
+                    note: `[dev] Project world changed, but local-server world was kept because this run is non-interactive.`,
+                };
+            }
+
+            switch (await promptForRuntimeWorldAction()) {
+                case "replace":
+                    return {
+                        action: "replace",
+                        sourceIdentity,
+                    };
+                case "backup":
+                    return {
+                        action: "backup-and-replace",
+                        sourceIdentity,
+                    };
+                case "keep":
+                default:
+                    return {
+                        action: "preserve",
+                        sourceIdentity,
+                        note: `[dev] Kept existing local-server world for "${options.runtimeState.worldName}".`,
+                    };
+            }
+    }
+}
+
+async function applyRuntimeWorldDecision(options: {
+    projectRoot: string;
+    config: BlurProject;
+    runtimeState: ReturnType<typeof resolveBdsRuntimeState>;
+    decision: RuntimeWorldDecision;
+    debug: ReturnType<typeof createDebugLogger>;
+}): Promise<void> {
+    if (options.decision.note) {
+        console.log(options.decision.note);
+    }
+
+    switch (options.decision.action) {
+        case "copy-missing":
+            await replaceRuntimeWorldFromProjectSource(
+                options.projectRoot,
+                options.config,
+                options.runtimeState,
+                {
+                    requireWorldSource: true,
+                },
+                options.debug,
+            );
+            await writeRuntimeWorldSeedState(options.projectRoot, {
+                worldName: options.runtimeState.worldName,
+                sourceIdentity: options.decision.sourceIdentity,
+            });
+            console.log(
+                `[dev] Copied project world into local-server for "${options.runtimeState.worldName}".`,
+            );
+            return;
+        case "replace":
+            await replaceRuntimeWorldFromProjectSource(
+                options.projectRoot,
+                options.config,
+                options.runtimeState,
+                {
+                    requireWorldSource: true,
+                },
+                options.debug,
+            );
+            await writeRuntimeWorldSeedState(options.projectRoot, {
+                worldName: options.runtimeState.worldName,
+                sourceIdentity: options.decision.sourceIdentity,
+            });
+            console.log(
+                `[dev] Replaced local-server world for "${options.runtimeState.worldName}".`,
+            );
+            return;
+        case "backup-and-replace": {
+            const backupPath = await backupRuntimeWorldForBdsStartup(
+                options.runtimeState,
+                options.debug,
+            );
+            await replaceRuntimeWorldFromProjectSource(
+                options.projectRoot,
+                options.config,
+                options.runtimeState,
+                {
+                    requireWorldSource: true,
+                },
+                options.debug,
+            );
+            await writeRuntimeWorldSeedState(options.projectRoot, {
+                worldName: options.runtimeState.worldName,
+                sourceIdentity: options.decision.sourceIdentity,
+            });
+            console.log(
+                backupPath
+                    ? `[dev] Backed up and replaced local-server world for "${options.runtimeState.worldName}".`
+                    : `[dev] Replaced local-server world for "${options.runtimeState.worldName}".`,
+            );
+            return;
+        }
+        case "preserve":
+        case "none":
+        default:
+            return;
     }
 }
 
@@ -1200,6 +1867,15 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         return;
     }
 
+    if (resolved.localServer && config.world.backend === "s3") {
+        await syncRemoteWorldForDev({
+            projectRoot,
+            config,
+            worldName: selectedWorld.worldName,
+            debug,
+        });
+    }
+
     console.log("[dev] Configuration:");
     console.log(
         JSON.stringify(
@@ -1227,6 +1903,10 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 restartOnWorldChange:
                     resolved.restartOnWorldChange ??
                     config.dev.localServer.restartOnWorldChange,
+                projectWorldMode:
+                    config.dev.localServer.worldSync.projectWorldMode,
+                runtimeWorldMode:
+                    config.dev.localServer.worldSync.runtimeWorldMode,
                 localDeployBehaviorPack: resolved.localDeployBehaviorPack,
                 localDeployResourcePack: resolved.localDeployResourcePack,
                 localServerBehaviorPack: resolved.localServerBehaviorPack,
@@ -1255,14 +1935,16 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
               reporter: localServerProgressReporter,
           })
         : undefined;
+    const runtimeState = resolved.localServer
+        ? resolveBdsRuntimeState(
+              projectRoot,
+              config,
+              machineSettings,
+              selectedWorld.worldName,
+          )
+        : undefined;
 
-    if (resolved.localServer && resolved.watchWorld) {
-        const runtimeState = resolveBdsRuntimeState(
-            projectRoot,
-            config,
-            machineSettings,
-            selectedWorld.worldName,
-        );
+    if (runtimeState && resolved.watchWorld) {
         const bootstrapResult = await bootstrapProjectWorldSourceFromBds(
             runtimeState,
             debug,
@@ -1271,11 +1953,46 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             console.log(
                 `[dev] local-server copied the existing runtime world into ${selectedWorld.worldSourcePath}.`,
             );
+            const sourceIdentity = await computeProjectWorldSourceIdentity(
+                runtimeState.worldSourceDirectory,
+            );
+            if (sourceIdentity) {
+                await writeRuntimeWorldSeedState(projectRoot, {
+                    worldName: runtimeState.worldName,
+                    sourceIdentity,
+                });
+            }
         } else if (bootstrapResult === "waiting-for-runtime") {
             console.log(
                 `[dev] local-server has no existing runtime world to copy yet. ${selectedWorld.worldSourcePath} will sync after the runtime world is created.`,
             );
         }
+    }
+
+    if (runtimeState) {
+        const runtimeDecision = await resolveRuntimeWorldDecision({
+            projectRoot,
+            config,
+            runtimeState,
+        });
+        await applyRuntimeWorldDecision({
+            projectRoot,
+            config,
+            runtimeState,
+            decision: runtimeDecision,
+            debug,
+        });
+    }
+
+    if (resolved.localServer && resolved.watchWorld) {
+        await writeLocalServerSession(projectRoot, {
+            processId: process.pid,
+            worldName: selectedWorld.worldName,
+            watchWorld: true,
+            startedAt: new Date().toISOString(),
+        });
+    } else {
+        await clearLocalServerSession(projectRoot);
     }
 
     const watchers = new Set<FSWatcher>();
@@ -1358,6 +2075,15 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             (runtimeWorldDirty || !localServer?.isRunning())
         ) {
             await captureWorldSourceFromBds(state, debug);
+            const sourceIdentity = await computeProjectWorldSourceIdentity(
+                state.worldSourceDirectory,
+            );
+            if (sourceIdentity) {
+                await writeRuntimeWorldSeedState(projectRoot, {
+                    worldName: state.worldName,
+                    sourceIdentity,
+                });
+            }
             runtimeWorldDirty = false;
         }
     };
@@ -1404,6 +2130,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             }
 
             await flushRuntimeState();
+            await clearLocalServerSession(projectRoot);
 
             for (const watcher of watchers) {
                 await watcher.close();
@@ -1470,14 +2197,80 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                     { animate: false },
                 );
             }
+
+            let localServerApplyMode: PipelineMode = mode;
+            let localServerWorldMode: "preserve" | "replace" = "preserve";
+            let nextRuntimeSeedIdentity: string | undefined;
+            if (mode === "restart" && runtimeState) {
+                const runtimeDecision = await resolveRuntimeWorldDecision({
+                    projectRoot,
+                    config,
+                    runtimeState,
+                });
+
+                if (runtimeDecision.note) {
+                    console.log(runtimeDecision.note);
+                }
+
+                switch (runtimeDecision.action) {
+                    case "copy-missing":
+                    case "replace":
+                        localServerWorldMode = "replace";
+                        nextRuntimeSeedIdentity =
+                            runtimeDecision.sourceIdentity;
+                        break;
+                    case "backup-and-replace":
+                        await localServer.stop({
+                            suppressExitNotification: true,
+                        });
+                        await backupRuntimeWorldForBdsStartup(
+                            runtimeState,
+                            debug,
+                        );
+                        await replaceRuntimeWorldFromProjectSource(
+                            projectRoot,
+                            config,
+                            runtimeState,
+                            {
+                                requireWorldSource: true,
+                            },
+                            debug,
+                        );
+                        await writeRuntimeWorldSeedState(projectRoot, {
+                            worldName: runtimeState.worldName,
+                            sourceIdentity: runtimeDecision.sourceIdentity,
+                        });
+                        localServerApplyMode = "start";
+                        localServerWorldMode = "preserve";
+                        console.log(
+                            `[dev] Backed up and replaced local-server world for "${runtimeState.worldName}".`,
+                        );
+                        break;
+                    case "preserve":
+                    case "none":
+                    default:
+                        localServerWorldMode = "preserve";
+                        break;
+                }
+            }
+
             await waitForPromiseIfSlow(
-                localServer.apply(mode),
+                localServer.apply(localServerApplyMode, {
+                    worldMode: localServerWorldMode,
+                    requireWorldSource: localServerWorldMode === "replace",
+                }),
                 "Preparing local server...",
                 250,
                 { animate: false },
             );
+            if (nextRuntimeSeedIdentity && runtimeState) {
+                await writeRuntimeWorldSeedState(projectRoot, {
+                    worldName: runtimeState.worldName,
+                    sourceIdentity: nextRuntimeSeedIdentity,
+                });
+            }
             console.log(
-                `[dev] local-server ${mode === "reload" ? "reloaded" : "synchronized"}.`,
+                `[dev] local-server ${localServerApplyMode === "reload" ? "reloaded" : "synchronized"}.`,
             );
         }
     };

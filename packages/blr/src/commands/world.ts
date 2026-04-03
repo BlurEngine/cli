@@ -1,22 +1,37 @@
 import path from "node:path";
 import { captureWorldSourceFromBds, resolveBdsRuntimeState } from "../bds.js";
 import { loadBlurConfig } from "../config.js";
+import { DEFAULT_PROJECT_WORLDS_ROOT } from "../constants.js";
 import { createDebugLogger, resolveDebugEnabled } from "../debug.js";
 import { resolveMachineSettings } from "../environment.js";
 import {
     ensureDirectory,
     exists,
     isDirectoryEmptyExcept,
+    listDirectories,
     readJson,
     writeJson,
     writeText,
 } from "../fs.js";
+import { readTrackedProjectWorldState } from "../project-world-state.js";
+import { isPromptCancelledError, runPrompt } from "../prompt.js";
+import type { BlurProject } from "../types.js";
+import {
+    readActiveLocalServerSession,
+    writeRuntimeWorldSeedState,
+} from "../world-internal-state.js";
+import { computeProjectWorldSourceIdentity } from "../world-source-identity.js";
 import {
     acquireRemoteWorldLock,
     describeWorldStatus,
+    listRemoteWorldVersionsFromS3,
+    listRemoteWorldsFromS3,
     pullWorldFromS3,
     pushWorldToS3,
     releaseRemoteWorldLock,
+    type ListedRemoteWorld,
+    type RemoteWorldVersionEntry,
+    WorldPushRemoteConflictError,
 } from "../world-backend.js";
 import {
     assertValidWorldName,
@@ -40,6 +55,7 @@ type WorldRuntimeOptions = WorldSharedOptions & {
 type PullWorldCommandOptions = WorldSharedOptions & {
     lock?: boolean;
     forceLock?: boolean;
+    versionId?: string;
 };
 
 type PushWorldCommandOptions = WorldSharedOptions & {
@@ -62,6 +78,42 @@ type CaptureWorldCommandOptions = WorldRuntimeOptions & {
 
 type WorldCommandOptions = WorldSharedOptions;
 type UseWorldCommandOptions = WorldCommandOptions;
+type ListWorldCommandOptions = WorldCommandOptions & {
+    json?: boolean;
+};
+type WorldVersionsCommandOptions = ListWorldCommandOptions;
+
+type WorldPushConflictChoice = "cancel" | "push-anyway";
+type WorldVersionSelectionCandidate = {
+    name: string;
+    local: boolean;
+    tracked: boolean;
+};
+
+function formatRemoteWorldVersion(version: RemoteWorldVersionEntry): string {
+    const latest = version.isLatest ? " latest" : "";
+    const versionId =
+        version.versionId === "null"
+            ? "null (pre-versioning object)"
+            : (version.versionId ?? "(none)");
+    const timestamp = version.lastModified ? ` ${version.lastModified}` : "";
+    const pushedBy = version.pushedBy ? ` by ${version.pushedBy}` : "";
+    const pushReason = version.pushReason ? ` (${version.pushReason})` : "";
+    return `- ${versionId}${latest}${timestamp}${pushedBy}${pushReason}`;
+}
+
+function formatListedRemoteWorld(world: ListedRemoteWorld): string {
+    if (!world.versioning.available || !world.latestObject?.versionId) {
+        return `- ${world.worldName} (version unavailable)`;
+    }
+    const timestamp = world.latestObject.lastModified
+        ? ` @ ${world.latestObject.lastModified}`
+        : "";
+    const pushedBy = world.latestObject.pushedBy
+        ? ` by ${world.latestObject.pushedBy}`
+        : "";
+    return `- ${world.worldName} (${world.latestObject.versionId}${timestamp}${pushedBy})`;
+}
 
 function resolveWorldName(
     explicit: string | undefined,
@@ -95,6 +147,203 @@ function ensureMutableRecord(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
 }
 
+function canPromptForWorldCommand(): boolean {
+    return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+async function assertWorldPullIsSafe(
+    projectRoot: string,
+    worldName: string,
+): Promise<void> {
+    const session = await readActiveLocalServerSession(projectRoot);
+    if (!session?.watchWorld || session.worldName !== worldName) {
+        return;
+    }
+
+    throw new Error(
+        `Cannot pull "${worldName}" while local-server watch-world is active. Stop "blr dev" first.`,
+    );
+}
+
+function formatWorldVersionSelectionCandidate(
+    candidate: WorldVersionSelectionCandidate,
+): string {
+    const sources: string[] = [];
+    if (candidate.local) {
+        sources.push("local");
+    }
+    if (candidate.tracked) {
+        sources.push("tracked");
+    }
+    if (sources.length === 0) {
+        return candidate.name;
+    }
+    return `${candidate.name} (${sources.join(", ")})`;
+}
+
+export async function listWorldVersionSelectionCandidates(
+    projectRoot: string,
+): Promise<WorldVersionSelectionCandidate[]> {
+    const [trackedState, localWorldDirectories] = await Promise.all([
+        readTrackedProjectWorldState(projectRoot),
+        listDirectories(path.resolve(projectRoot, DEFAULT_PROJECT_WORLDS_ROOT)),
+    ]);
+
+    const candidates = new Map<string, WorldVersionSelectionCandidate>();
+    for (const worldName of localWorldDirectories) {
+        const normalized = worldName.trim();
+        if (!normalized) {
+            continue;
+        }
+        candidates.set(normalized, {
+            name: normalized,
+            local: true,
+            tracked: false,
+        });
+    }
+
+    for (const trackedWorld of trackedState?.worlds ?? []) {
+        const existing = candidates.get(trackedWorld.name);
+        if (existing) {
+            existing.tracked = true;
+            continue;
+        }
+        candidates.set(trackedWorld.name, {
+            name: trackedWorld.name,
+            local: false,
+            tracked: true,
+        });
+    }
+
+    return Array.from(candidates.values()).sort((left, right) =>
+        left.name.localeCompare(right.name),
+    );
+}
+
+export async function resolveWorldVersionsCommandWorldName(input: {
+    projectRoot: string;
+    config: BlurProject;
+    requestedWorldName?: string;
+    jsonOutput?: boolean;
+    canPrompt?: () => boolean;
+    prompt?: typeof runPrompt;
+}): Promise<string | undefined> {
+    const fallbackWorldName = input.config.dev.localServer.worldName;
+    if (input.requestedWorldName) {
+        return resolveWorldName(input.requestedWorldName, fallbackWorldName);
+    }
+
+    if (input.jsonOutput || !(input.canPrompt ?? canPromptForWorldCommand)()) {
+        return resolveWorldName(undefined, fallbackWorldName);
+    }
+
+    const candidates = await listWorldVersionSelectionCandidates(
+        input.projectRoot,
+    );
+    if (candidates.length === 0) {
+        return resolveWorldName(undefined, fallbackWorldName);
+    }
+    if (candidates.length === 1) {
+        return resolveWorldName(candidates[0]?.name, fallbackWorldName);
+    }
+
+    const initialIndex = Math.max(
+        0,
+        candidates.findIndex(
+            (candidate) => candidate.name === fallbackWorldName,
+        ),
+    );
+
+    try {
+        const result = await (input.prompt ?? runPrompt)({
+            type: "select",
+            name: "worldName",
+            message: "Select a world to list remote versions for:",
+            choices: candidates.map((candidate) => ({
+                title: formatWorldVersionSelectionCandidate(candidate),
+                value: candidate.name,
+            })),
+            initial: initialIndex,
+            hint: "- Use arrow keys. Enter to confirm.",
+            instructions: false,
+        });
+        return resolveWorldName(
+            result.worldName as string | undefined,
+            fallbackWorldName,
+        );
+    } catch (error) {
+        if (isPromptCancelledError(error)) {
+            return undefined;
+        }
+        throw error;
+    }
+}
+
+function buildWorldPushConflictPromptMessage(
+    error: WorldPushRemoteConflictError,
+): string {
+    switch (error.kind) {
+        case "missing-tracked-version":
+            return [
+                error.message,
+                "Pushing now can create a new remote version without any tracked base version in the project.",
+                "Choose how to continue:",
+            ].join("\n");
+        case "remote-fingerprint-drift":
+            return [
+                error.message,
+                "Pushing now will adopt the current remote target from blr.config.json and replace the tracked pin for this world.",
+                "Choose how to continue:",
+            ].join("\n");
+        case "remote-version-mismatch":
+        default:
+            return [
+                error.message,
+                "Pushing now can overwrite newer remote work that has not been pulled into this project yet.",
+                "Choose how to continue:",
+            ].join("\n");
+    }
+}
+
+async function shouldForceWorldPushAfterConflict(
+    error: WorldPushRemoteConflictError,
+): Promise<boolean> {
+    if (!canPromptForWorldCommand()) {
+        return false;
+    }
+
+    try {
+        const result = await runPrompt({
+            type: "select",
+            name: "worldPushConflictChoice",
+            message: buildWorldPushConflictPromptMessage(error),
+            choices: [
+                {
+                    title: "Cancel and review remote world state",
+                    value: "cancel",
+                },
+                {
+                    title: "Push anyway and create a new remote version",
+                    value: "push-anyway",
+                },
+            ],
+            initial: 0,
+            hint: "- Use arrow keys. Enter to confirm.",
+            instructions: false,
+        });
+
+        return (
+            (result.worldPushConflictChoice as WorldPushConflictChoice) ===
+            "push-anyway"
+        );
+    } catch (error) {
+        if (isPromptCancelledError(error)) {
+            return false;
+        }
+        throw error;
+    }
+}
+
 export async function runWorldStatusCommand(
     requestedWorldName: string | undefined,
     options: WorldCommandOptions,
@@ -114,6 +363,74 @@ export async function runWorldStatusCommand(
     console.log(JSON.stringify(status, null, 2));
 }
 
+export async function runWorldListCommand(
+    options: ListWorldCommandOptions,
+): Promise<void> {
+    const { projectRoot, config } = await loadBlurConfig(process.cwd());
+    const worlds = await listRemoteWorldsFromS3(projectRoot, config);
+
+    if (options.json) {
+        console.log(JSON.stringify(worlds, null, 2));
+        return;
+    }
+
+    if (worlds.length === 0) {
+        console.log("[world] No remote worlds found.");
+        return;
+    }
+
+    console.log("[world] Remote worlds:");
+    for (const world of worlds) {
+        console.log(formatListedRemoteWorld(world));
+    }
+
+    const versioningWarning = worlds.find(
+        (world) => !world.versioning.available && world.versioning.detail,
+    )?.versioning.detail;
+    if (versioningWarning) {
+        console.warn(`[world] Note: ${versioningWarning}`);
+    }
+}
+
+export async function runWorldVersionsCommand(
+    requestedWorldName: string | undefined,
+    options: WorldVersionsCommandOptions,
+): Promise<void> {
+    const { projectRoot, config } = await loadBlurConfig(process.cwd());
+    const worldName = await resolveWorldVersionsCommandWorldName({
+        projectRoot,
+        config,
+        requestedWorldName,
+        jsonOutput: options.json,
+    });
+    if (!worldName) {
+        console.log("[world] Version listing cancelled.");
+        return;
+    }
+    const listed = await listRemoteWorldVersionsFromS3(
+        projectRoot,
+        config,
+        worldName,
+    );
+
+    if (options.json) {
+        console.log(JSON.stringify(listed, null, 2));
+        return;
+    }
+
+    if (listed.versions.length === 0) {
+        console.log(
+            `[world] No remote object versions found for "${worldName}".`,
+        );
+        return;
+    }
+
+    console.log(`[world] Remote versions for "${worldName}":`);
+    for (const version of listed.versions) {
+        console.log(formatRemoteWorldVersion(version));
+    }
+}
+
 export async function runWorldPullCommand(
     requestedWorldName: string | undefined,
     options: PullWorldCommandOptions,
@@ -124,14 +441,19 @@ export async function runWorldPullCommand(
         requestedWorldName,
         config.dev.localServer.worldName,
     );
-    const context = await pullWorldFromS3(projectRoot, config, worldName, {
+    await assertWorldPullIsSafe(projectRoot, worldName);
+    const pulled = await pullWorldFromS3(projectRoot, config, worldName, {
         lock: options.lock,
         forceLock: options.forceLock,
         reason: options.reason,
+        versionId:
+            typeof options.versionId === "string"
+                ? options.versionId.trim()
+                : undefined,
         debug,
     });
     console.log(
-        `[world] Pulled "${worldName}" from s3://${context.bucket}/${context.objectKey} into ${context.worldSourcePath}`,
+        `[world] Pulled "${worldName}" from s3://${pulled.context.bucket}/${pulled.context.objectKey} into ${pulled.context.worldSourcePath} as version ${pulled.versionId}`,
     );
 }
 
@@ -145,14 +467,45 @@ export async function runWorldPushCommand(
         requestedWorldName,
         config.dev.localServer.worldName,
     );
-    const context = await pushWorldToS3(projectRoot, config, worldName, {
-        unlock: options.unlock,
-        forceLock: options.forceLock,
-        reason: options.reason,
-        debug,
-    });
+    let pushed;
+    try {
+        pushed = await pushWorldToS3(projectRoot, config, worldName, {
+            unlock: options.unlock,
+            forceLock: options.forceLock,
+            reason: options.reason,
+            debug,
+        });
+    } catch (error) {
+        if (!(error instanceof WorldPushRemoteConflictError)) {
+            throw error;
+        }
+
+        const confirmed = await shouldForceWorldPushAfterConflict(error);
+        if (!confirmed) {
+            if (!canPromptForWorldCommand()) {
+                throw new Error(
+                    `${error.message} Re-run the command in an interactive terminal if you really want to push anyway.`,
+                );
+            }
+            console.log("[world] Push cancelled.");
+            return;
+        }
+
+        pushed = await pushWorldToS3(projectRoot, config, worldName, {
+            unlock: options.unlock,
+            forceLock: options.forceLock,
+            reason: options.reason,
+            allowRemoteConflict: true,
+            debug,
+        });
+    }
+    const { context, versionId } = pushed;
+    const versionSuffix =
+        typeof versionId === "string" && versionId.length > 0
+            ? ` as version ${versionId}`
+            : "";
     console.log(
-        `[world] Pushed "${worldName}" from ${context.worldSourcePath} to s3://${context.bucket}/${context.objectKey}`,
+        `[world] Pushed "${worldName}" from ${context.worldSourcePath} to s3://${context.bucket}/${context.objectKey}${versionSuffix}`,
     );
 }
 
@@ -247,6 +600,15 @@ export async function runWorldCaptureCommand(
     }
 
     await captureWorldSourceFromBds(state, debug);
+    const sourceIdentity = await computeProjectWorldSourceIdentity(
+        state.worldSourceDirectory,
+    );
+    if (sourceIdentity) {
+        await writeRuntimeWorldSeedState(projectRoot, {
+            worldName,
+            sourceIdentity,
+        });
+    }
     console.log(
         `[world] Captured runtime world "${worldName}" from ${state.worldDirectory} into ${state.worldSourceDirectory}`,
     );
