@@ -28,11 +28,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
-          registry-url: https://registry.npmjs.org
-
-      - name: Upgrade npm for trusted publishing
-        run: npm install --global npm@^11.5.1
+          package-manager-cache: false
 
       - name: Install dependencies
         run: npm ci
@@ -68,6 +64,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Detect pending npm publish
         id: detect
@@ -136,12 +133,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org
 
-      - name: Upgrade npm for trusted publishing
-        run: npm install --global npm@^11.5.1
+      - name: Report publish toolchain
+        run: |
+          node --version
+          npm --version
 
       - name: Install dependencies
         run: npm ci
@@ -151,5 +150,3 @@ jobs:
 
       - name: Publish package
         run: npm run release
-        env:
-          NPM_CONFIG_PROVENANCE: true
