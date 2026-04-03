@@ -1,5 +1,11 @@
 # @blurengine/cli
 
+## 0.3.1
+
+### Patch Changes
+
+- [`0ecfea1`](https://github.com/BlurEngine/cli/commit/0ecfea1c1713dc647b0c95d4c71f87abec42b8ef) Thanks [@SupaHam](https://github.com/SupaHam)! - cleanup publish workflow
+
 ## 0.3.0
 
 ### Minor Changes
