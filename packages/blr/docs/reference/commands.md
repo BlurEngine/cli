@@ -77,6 +77,9 @@ When watch mode is active:
 
 - `blr` prints `[dev] Watching for changes...` once any enabled watcher is ready
 - `watch-scripts` uses the configured project-relative glob-style watch paths
+- runtime source changes trigger a rebuild and local-server `reload`
+- behavior-pack and resource-pack changes trigger a rebuild and resync without sending `reload`
+- `blr.config.json` and `package.json` are not watched by default; if you add them to `dev.watch.paths`, `blr` tells you to restart `dev` instead of reloading
 - `watch-allowlist` watches runtime BDS `allowlist.json` and copies it back into `server/allowlist.json`
 - `watch-world` watches the project world source for restart/reset triggers and captures the runtime BDS world back into that project world source on shutdown
 - `watch-world` starts only after startup world reconciliation is complete
@@ -127,7 +130,7 @@ Interactive behavior:
   - continue without local server when the selected BDS version is not available on the configured channel
   - silence the prompt for 24 hours for that specific newer version
 - if the active local-server version came from CLI or environment overrides, `dev` does not show upgrade prompts for `minecraft.targetVersion`
-- when interactive mode is disabled, `dev` still shows necessary local-server version prompts when the active version comes from `blr.config.json`
+- when interactive mode is disabled and the configured local-server version is unavailable on the selected channel, `dev` exits immediately instead of prompting
 - the second interactive page selects watch/capture items
 - `watch-world` and `watch-allowlist` are only offered on the second page when `local-server` is selected
 - the third interactive page selects pack automation for this run when local deploy or local server are active

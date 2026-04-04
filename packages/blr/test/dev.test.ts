@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { access } from "node:fs/promises";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -6,10 +7,17 @@ import { loadBlurConfig } from "../src/config.js";
 import { BLR_ENV_BDS_VERSION } from "../src/constants.js";
 import {
     buildRemoteWorldSyncFailureMessage,
+    mergePipelineModes,
+    resolveProjectWatchChangeAction,
+    runDevCommand,
     resolveDevLocalServerVersionSource,
     shouldUseInteractiveDevConfiguration,
 } from "../src/commands/dev.js";
-import { createTempDirectory, writeJsonFile } from "./helpers.js";
+import {
+    createJsonResponse,
+    createTempDirectory,
+    writeJsonFile,
+} from "./helpers.js";
 
 async function writeConfigFile(
     projectRoot: string,
@@ -226,4 +234,123 @@ test("buildRemoteWorldSyncFailureMessage replaces raw unknown backend errors wit
         }),
         /Continuing without remote world sync\./,
     );
+});
+
+test("resolveProjectWatchChangeAction reloads runtime changes, syncs pack changes, and ignores config changes", () => {
+    assert.deepEqual(resolveProjectWatchChangeAction("src/main.ts"), {
+        kind: "reload",
+        pipelineMode: "reload",
+    });
+    assert.deepEqual(
+        resolveProjectWatchChangeAction(
+            "behavior_packs/example-pack/entities/pet.json",
+        ),
+        {
+            kind: "sync",
+            pipelineMode: "start",
+        },
+    );
+    assert.deepEqual(
+        resolveProjectWatchChangeAction(
+            "resource_packs/example-pack/textures/entity/pet.png",
+        ),
+        {
+            kind: "sync",
+            pipelineMode: "start",
+        },
+    );
+    assert.deepEqual(resolveProjectWatchChangeAction("blr.config.json"), {
+        kind: "ignore",
+        message:
+            "[dev] change ignored: blr.config.json. Restart dev to apply it.",
+    });
+    assert.deepEqual(resolveProjectWatchChangeAction("package.json"), {
+        kind: "ignore",
+        message: "[dev] change ignored: package.json. Restart dev to apply it.",
+    });
+    assert.deepEqual(resolveProjectWatchChangeAction("scripts/shared.ts"), {
+        kind: "reload",
+        pipelineMode: "reload",
+    });
+});
+
+test("mergePipelineModes keeps the strongest queued pipeline mode", () => {
+    assert.equal(mergePipelineModes(undefined, "start"), "start");
+    assert.equal(mergePipelineModes("start", "reload"), "reload");
+    assert.equal(mergePipelineModes("reload", "start"), "reload");
+    assert.equal(mergePipelineModes("reload", "restart"), "restart");
+});
+
+test("runDevCommand exits immediately when local-server is the only selected action and its configured BDS version is unavailable", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-dev-invalid-bds-");
+    await createConfigLoadProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        minecraft: {
+            channel: "stable",
+            targetVersion: "1.26.12.02",
+        },
+    });
+
+    const previousCwd = process.cwd();
+    process.chdir(projectRoot);
+    t.after(() => {
+        process.chdir(previousCwd);
+    });
+
+    const logLines: string[] = [];
+    const errorLines: string[] = [];
+    t.mock.method(console, "log", (message?: unknown) => {
+        logLines.push(String(message));
+    });
+    t.mock.method(console, "error", (message?: unknown) => {
+        errorLines.push(String(message));
+    });
+
+    t.mock.method(
+        globalThis,
+        "fetch",
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes("/api/v1.0/download/links")) {
+                return createJsonResponse({
+                    result: {
+                        links: [
+                            {
+                                downloadType: "serverBedrockWindows",
+                                downloadUrl:
+                                    "https://www.minecraft.net/bedrockdedicatedserver/bin-win/bedrock-server-1.26.11.1.zip",
+                            },
+                            {
+                                downloadType: "serverBedrockLinux",
+                                downloadUrl:
+                                    "https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-1.26.11.1.zip",
+                            },
+                        ],
+                    },
+                });
+            }
+
+            void init;
+            return new Response(null, { status: 404 });
+        },
+    );
+
+    await runDevCommand({});
+
+    assert.ok(
+        errorLines.some((line) =>
+            /Local server was disabled because BDS version 1\.26\.12\.(?:02|2) is not available on the stable channel\./i.test(
+                line,
+            ),
+        ),
+    );
+    assert.ok(
+        !logLines.some((line) =>
+            /Continuing without local server because BDS version/i.test(line),
+        ),
+    );
+    assert.ok(!logLines.includes("[dev] Configuration:"));
+    await assert.rejects(access(path.join(projectRoot, "dist")), /ENOENT/);
 });

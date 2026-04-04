@@ -23,7 +23,7 @@ import { resolvePackFeatureSelection } from "../content.js";
 import { loadBlurConfig } from "../config.js";
 import { createDebugLogger, resolveDebugEnabled } from "../debug.js";
 import { resolveMachineSettings } from "../environment.js";
-import { BLR_ENV_BDS_VERSION } from "../constants.js";
+import { BLR_CONFIG_FILE, BLR_ENV_BDS_VERSION } from "../constants.js";
 import {
     applyMinecraftTargetVersion,
     resolveConfiguredMinecraftTargetVersionSource,
@@ -103,6 +103,7 @@ type DevResolvedOptions = {
     restartOnWorldChange?: boolean;
     exitMessage?: string;
     exitIsError?: boolean;
+    abortBeforeStart?: boolean;
 };
 
 type DevDefaultSelections = {
@@ -131,6 +132,7 @@ type DevInteractiveSelectionResult = {
     exitMessage?: string;
     exitIsError?: boolean;
     continueMessage?: string;
+    abortDev?: boolean;
 };
 type DevInteractiveHooks = {
     onLocalServerSelected?: () => Promise<DevInteractiveSelectionResult | void>;
@@ -147,6 +149,19 @@ type WaitOptions = {
 };
 
 type PipelineMode = "start" | "reload" | "restart";
+type ProjectWatchChangeAction =
+    | {
+          kind: "ignore";
+          message: string;
+      }
+    | {
+          kind: "sync";
+          pipelineMode: "start";
+      }
+    | {
+          kind: "reload";
+          pipelineMode: "reload";
+      };
 type WatchPlan = {
     patterns: string[];
     roots: string[];
@@ -158,6 +173,59 @@ const GLOB_SEGMENT_PATTERN = /[*?[\]{}()!+@]/;
 function normalizeWatchPath(targetPath: string): string {
     const normalized = targetPath.split("\\").join("/");
     return normalized.startsWith("./") ? normalized.slice(2) : normalized;
+}
+
+export function mergePipelineModes(
+    currentMode: PipelineMode | undefined,
+    nextMode: PipelineMode,
+): PipelineMode {
+    if (currentMode === "restart" || nextMode === "restart") {
+        return "restart";
+    }
+
+    if (currentMode === "reload" || nextMode === "reload") {
+        return "reload";
+    }
+
+    return "start";
+}
+
+export function resolveProjectWatchChangeAction(
+    targetPath: string,
+): ProjectWatchChangeAction {
+    const normalizedPath = normalizeWatchPath(targetPath).replace(/\/+$/, "");
+
+    if (normalizedPath === BLR_CONFIG_FILE) {
+        return {
+            kind: "ignore",
+            message: `[dev] change ignored: ${BLR_CONFIG_FILE}. Restart dev to apply it.`,
+        };
+    }
+
+    if (normalizedPath === "package.json") {
+        return {
+            kind: "ignore",
+            message:
+                "[dev] change ignored: package.json. Restart dev to apply it.",
+        };
+    }
+
+    if (
+        normalizedPath === "behavior_packs" ||
+        normalizedPath.startsWith("behavior_packs/") ||
+        normalizedPath === "resource_packs" ||
+        normalizedPath.startsWith("resource_packs/")
+    ) {
+        return {
+            kind: "sync",
+            pipelineMode: "start",
+        };
+    }
+
+    return {
+        kind: "reload",
+        pipelineMode: "reload",
+    };
 }
 
 function deriveWatchRoot(pattern: string): string {
@@ -1237,11 +1305,31 @@ async function resolveDevOptions(
         }
 
         const localServerSelection = await hooks?.onLocalServerSelected?.();
-        if (localServerSelection?.continueMessage) {
-            logDevExit(localServerSelection.continueMessage);
-        }
-
         if (localServerSelection?.keepLocalServer === false) {
+            if (localServerSelection.abortDev) {
+                return {
+                    ...resolved,
+                    localServer: false,
+                    localServerBehaviorPack: false,
+                    localServerResourcePack: false,
+                    attachBehaviorPack: false,
+                    attachResourcePack: false,
+                    watchScripts: false,
+                    watchWorld: false,
+                    watchAllowlist: false,
+                    selectedAnyAction: false,
+                    exitMessage: localServerSelection.exitMessage,
+                    exitIsError: localServerSelection.exitIsError ?? false,
+                    abortBeforeStart: true,
+                };
+            }
+
+            const selectedAnyAction =
+                resolved.localDeploy || resolved.watchScripts;
+            if (localServerSelection.continueMessage && selectedAnyAction) {
+                logDevExit(localServerSelection.continueMessage);
+            }
+
             return {
                 ...resolved,
                 localServer: false,
@@ -1251,8 +1339,7 @@ async function resolveDevOptions(
                 attachResourcePack: false,
                 watchWorld: false,
                 watchAllowlist: false,
-                selectedAnyAction:
-                    resolved.localDeploy || resolved.watchScripts,
+                selectedAnyAction,
                 exitMessage: localServerSelection.exitMessage,
                 exitIsError: localServerSelection.exitIsError ?? false,
             };
@@ -1558,6 +1645,8 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             onLocalServerSelected: async () => {
                 machine ??= resolveCurrentMachine();
                 const effectiveBdsVersion = machine.localServer.bdsVersion;
+                const interactiveDevConfiguration =
+                    shouldUseInteractiveDevConfiguration(options);
                 const versionSource = await resolveDevLocalServerVersionSource(
                     configPath,
                     options,
@@ -1616,6 +1705,15 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 }
 
                 if (!status.artifactAvailable) {
+                    if (!interactiveDevConfiguration) {
+                        return {
+                            keepLocalServer: false,
+                            exitMessage: `Local server was disabled because BDS version ${effectiveBdsVersion} is not available on the ${config.minecraft.channel} channel.`,
+                            exitIsError: true,
+                            abortDev: true,
+                        };
+                    }
+
                     const silenced =
                         await isMinecraftTargetUpdatePromptSilenced(
                             projectRoot,
@@ -1859,7 +1957,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         resolved,
     });
 
-    if (resolved.interactive && !resolved.selectedAnyAction) {
+    if (resolved.abortBeforeStart || !resolved.selectedAnyAction) {
         logDevExit(
             resolved.exitMessage ?? "No dev actions selected. Exiting.",
             resolved.exitIsError,
@@ -2281,12 +2379,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         }
 
         if (running) {
-            pendingMode =
-                mode === "restart" || pendingMode === "restart"
-                    ? "restart"
-                    : mode === "reload" || pendingMode === "reload"
-                      ? "reload"
-                      : "start";
+            pendingMode = mergePipelineModes(pendingMode, mode);
             debug.log("watch", "queued follow-up pipeline mode", {
                 requestedMode: mode,
                 pendingMode,
@@ -2330,17 +2423,14 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     }
 
     const debounceMs = Math.max(25, config.dev.watch.debounceMs);
-    let scheduledMode: PipelineMode = "reload";
+    let scheduledMode: PipelineMode | undefined;
 
     const schedule = (mode: PipelineMode) => {
         if (shuttingDown) {
             return;
         }
 
-        scheduledMode =
-            scheduledMode === "restart" || mode === "restart"
-                ? "restart"
-                : mode;
+        scheduledMode = mergePipelineModes(scheduledMode, mode);
         debug.log("watch", "scheduled pipeline mode", {
             requestedMode: mode,
             scheduledMode,
@@ -2350,8 +2440,8 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             clearTimeout(debounceHandle);
         }
         debounceHandle = setTimeout(() => {
-            const modeToRun = scheduledMode;
-            scheduledMode = "reload";
+            const modeToRun = scheduledMode ?? "start";
+            scheduledMode = undefined;
             void enqueue(modeToRun);
         }, debounceMs);
     };
@@ -2415,6 +2505,17 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 return;
             }
 
+            const watchAction = resolveProjectWatchChangeAction(normalizedPath);
+            if (watchAction.kind === "ignore") {
+                debug.log("watch", "ignored project file event", {
+                    eventName,
+                    targetPath,
+                    normalizedPath,
+                });
+                console.log(watchAction.message);
+                return;
+            }
+
             console.log(
                 `[dev] change detected: ${eventName} ${normalizedPath}`,
             );
@@ -2422,9 +2523,9 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 eventName,
                 targetPath,
                 normalizedPath,
-                nextMode: "reload",
+                nextMode: watchAction.pipelineMode,
             });
-            schedule("reload");
+            schedule(watchAction.pipelineMode);
         });
     }
 

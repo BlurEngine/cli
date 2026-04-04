@@ -165,7 +165,7 @@ export interface BlurConfigRuntimeFile {
  */
 export interface BlurConfigWatchFile {
     /**
-     * Project-relative watch path patterns.
+     * Project-relative watch path patterns. Runtime source changes reload local-server; pack changes resync without reload.
      */
     paths?: string[];
     /**

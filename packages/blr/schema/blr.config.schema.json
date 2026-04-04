@@ -240,7 +240,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Project-relative watch path patterns."
+          "description": "Project-relative watch path patterns. Runtime source changes reload local-server; pack changes resync without reload."
         },
         "debounceMs": {
           "type": "number",

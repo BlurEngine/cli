@@ -300,11 +300,16 @@ Defaults if omitted:
 - `src/**/*`
 - `behavior_packs/**/*`
 - `resource_packs/**/*`
-- `blr.config.json`
-- `package.json`
 - `scriptsEnabledByDefault`: `true`
 - `worldEnabledByDefault`: `false`
 - `allowlistEnabledByDefault`: `true`
+
+Notes:
+
+- `watch-scripts` treats runtime source changes as rebuild-and-reload changes
+- behavior-pack and resource-pack changes are rebuilt and resynced without sending `reload` to local-server
+- `blr.config.json` and `package.json` are not watched by default because those changes usually need a fresh `dev` run rather than a live reload
+- if you explicitly add `blr.config.json` or `package.json` to `dev.watch.paths`, `blr` prints a restart notice and skips the reload
 
 ### `dev.localDeploy`
 

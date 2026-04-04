@@ -89,6 +89,22 @@ test("loadBlurConfig derives the default worldSourcePath from dev.localServer.wo
     assert.equal(config.features.resourcePack, false);
 });
 
+test("loadBlurConfig defaults dev.watch.paths to runtime and pack sources only", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.dev.watch.paths, [
+        "src/**/*",
+        "behavior_packs/**/*",
+        "resource_packs/**/*",
+    ]);
+});
+
 test("loadBlurConfig preserves the authored pack minEngineVersion", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-config-");
     await createMinimalProject(projectRoot, {

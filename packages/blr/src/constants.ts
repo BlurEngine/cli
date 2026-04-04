@@ -32,8 +32,6 @@ export const DEFAULT_WATCH_PATHS = [
     "src/**/*",
     "behavior_packs/**/*",
     "resource_packs/**/*",
-    BLR_CONFIG_FILE,
-    "package.json",
 ];
 
 export const BASELINE_DEPENDENCIES = {
