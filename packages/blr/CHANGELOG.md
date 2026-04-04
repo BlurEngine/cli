@@ -1,5 +1,11 @@
 # @blurengine/cli
 
+## 0.3.2
+
+### Patch Changes
+
+- [`7d7922d`](https://github.com/BlurEngine/cli/commit/7d7922d3a4c420be5fe015ad46884e00f44e72df) Thanks [@SupaHam](https://github.com/SupaHam)! - improve local-server reload logic and invalid targetVersion
+
 ## 0.3.1
 
 ### Patch Changes
