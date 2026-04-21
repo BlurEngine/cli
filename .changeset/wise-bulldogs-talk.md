@@ -1,5 +1,4 @@
-"@blurengine/cli": minor
----
+## "@blurengine/cli": minor
 
 Add Bedrock `level.dat` tooling to `blr world` with new `level-dat dump` and
 `level-dat edit` commands. These commands support project-world selection or
