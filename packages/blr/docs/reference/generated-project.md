@@ -182,6 +182,8 @@ Optional project state file.
 
 If present, `blr` applies it to BDS permissions state.
 
+If `watch-allowlist` is enabled, runtime BDS permissions changes are copied back into this file during `blr dev`.
+
 ### `server/bedrock_server.exe`
 
 Optional project state file for Windows local-server runs.

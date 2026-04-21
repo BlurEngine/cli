@@ -7,12 +7,24 @@ import { resolveMachineSettings } from "../environment.js";
 import {
     ensureDirectory,
     exists,
+    isDirectory,
     isDirectoryEmptyExcept,
     listDirectories,
     readJson,
     writeJson,
     writeText,
 } from "../fs.js";
+import {
+    createBedrockLevelDatDump,
+    readBedrockLevelDatFile,
+    type BedrockLevelDatDumpFormat,
+    writeBedrockLevelDatFile,
+} from "../level-dat.js";
+import { editBedrockLevelDatInteractively } from "../level-dat-editor.js";
+import {
+    createInteractivePrompt,
+    type InteractivePrompt,
+} from "../interactive-prompt.js";
 import { readTrackedProjectWorldState } from "../project-world-state.js";
 import { isPromptCancelledError, runPrompt } from "../prompt.js";
 import type { BlurProject } from "../types.js";
@@ -34,9 +46,11 @@ import {
     WorldPushRemoteConflictError,
 } from "../world-backend.js";
 import {
+    appendWorldSourceHint,
     assertValidWorldName,
     defaultProjectWorldSourcePath,
     resolveProjectWorldSourceDirectory,
+    resolveSelectedWorld,
     usesDefaultWorldSourcePath,
 } from "../world.js";
 
@@ -82,12 +96,26 @@ type ListWorldCommandOptions = WorldCommandOptions & {
     json?: boolean;
 };
 type WorldVersionsCommandOptions = ListWorldCommandOptions;
+type WorldLevelDatDumpCommandOptions = WorldCommandOptions & {
+    format?: BedrockLevelDatDumpFormat;
+    output?: string;
+    path?: string;
+};
+type WorldLevelDatEditCommandOptions = WorldCommandOptions & {
+    backup?: boolean;
+    path?: string;
+};
 
 type WorldPushConflictChoice = "cancel" | "push-anyway";
 type WorldVersionSelectionCandidate = {
     name: string;
     local: boolean;
     tracked: boolean;
+};
+
+type WorldLevelDatEditCommandRuntime = {
+    canPrompt?: () => boolean;
+    prompt?: InteractivePrompt;
 };
 
 function formatRemoteWorldVersion(version: RemoteWorldVersionEntry): string {
@@ -147,6 +175,120 @@ function ensureMutableRecord(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
 }
 
+function trimSurroundingQuotes(value: string): string {
+    let trimmed = value.trim();
+    if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+        trimmed = trimmed.slice(1);
+    }
+    if (trimmed.endsWith('"') || trimmed.endsWith("'")) {
+        trimmed = trimmed.slice(0, -1);
+    }
+    return trimmed.trim();
+}
+
+function looksLikeWorldPath(value: string): boolean {
+    const normalized = trimSurroundingQuotes(value);
+    if (normalized.length === 0) {
+        return false;
+    }
+
+    return (
+        path.isAbsolute(normalized) ||
+        normalized.startsWith(".") ||
+        normalized.includes("/") ||
+        normalized.includes("\\") ||
+        normalized.toLowerCase().endsWith(".dat")
+    );
+}
+
+type ResolvedWorldLevelDatTarget = {
+    worldName: string;
+    levelDatPath: string;
+    sourceDescription: string;
+    usesConfiguredWorldSource: boolean;
+};
+
+function resolveWorldLevelDatTargetFromPath(
+    projectRoot: string,
+    requestedPath: string,
+    fallbackWorldName: string,
+): ResolvedWorldLevelDatTarget {
+    const normalizedInput = trimSurroundingQuotes(requestedPath);
+    const resolvedInput = path.resolve(projectRoot, normalizedInput);
+    const isExplicitLevelDatFile =
+        path.basename(resolvedInput).toLowerCase() === "level.dat";
+    const levelDatPath = isExplicitLevelDatFile
+        ? resolvedInput
+        : path.join(resolvedInput, "level.dat");
+    const worldDirectory = isExplicitLevelDatFile
+        ? path.dirname(resolvedInput)
+        : resolvedInput;
+    const derivedWorldName =
+        path.basename(path.normalize(worldDirectory)) || fallbackWorldName;
+    const relativeLevelDatPath = path.relative(projectRoot, levelDatPath);
+
+    return {
+        worldName: derivedWorldName,
+        levelDatPath,
+        sourceDescription:
+            relativeLevelDatPath.length > 0
+                ? relativeLevelDatPath.replace(/\\/g, "/")
+                : "level.dat",
+        usesConfiguredWorldSource: false,
+    };
+}
+
+function resolveWorldLevelDatTarget(
+    projectRoot: string,
+    config: BlurProject,
+    requestedWorldName: string | undefined,
+    requestedPath: string | undefined,
+): ResolvedWorldLevelDatTarget {
+    const fallbackWorldName = config.dev.localServer.worldName;
+    const normalizedRequestedPath =
+        typeof requestedPath === "string" &&
+        trimSurroundingQuotes(requestedPath).length > 0
+            ? requestedPath
+            : undefined;
+
+    if (normalizedRequestedPath) {
+        return resolveWorldLevelDatTargetFromPath(
+            projectRoot,
+            normalizedRequestedPath,
+            fallbackWorldName,
+        );
+    }
+
+    if (
+        typeof requestedWorldName === "string" &&
+        looksLikeWorldPath(requestedWorldName)
+    ) {
+        return resolveWorldLevelDatTargetFromPath(
+            projectRoot,
+            requestedWorldName,
+            fallbackWorldName,
+        );
+    }
+
+    const selection = resolveSelectedWorld(config, requestedWorldName);
+
+    return {
+        worldName: selection.worldName,
+        levelDatPath: path.join(
+            resolveProjectWorldSourceDirectory(
+                projectRoot,
+                selection.worldSourcePath,
+            ),
+            "level.dat",
+        ),
+        sourceDescription: path.posix.join(
+            selection.worldSourcePath.replace(/\\/g, "/"),
+            "level.dat",
+        ),
+        usesConfiguredWorldSource: true,
+    };
+}
+
 function canPromptForWorldCommand(): boolean {
     return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
@@ -162,6 +304,20 @@ async function assertWorldPullIsSafe(
 
     throw new Error(
         `Cannot pull "${worldName}" while local-server watch-world is active. Stop "blr dev" first.`,
+    );
+}
+
+async function assertWorldLevelDatEditIsSafe(
+    projectRoot: string,
+    worldName: string,
+): Promise<void> {
+    const session = await readActiveLocalServerSession(projectRoot);
+    if (!session?.watchWorld || session.worldName !== worldName) {
+        return;
+    }
+
+    throw new Error(
+        `Cannot edit "${worldName}" level.dat while local-server watch-world is active. Stop "blr dev" first.`,
     );
 }
 
@@ -361,6 +517,153 @@ export async function runWorldStatusCommand(
         debug,
     );
     console.log(JSON.stringify(status, null, 2));
+}
+
+export async function runWorldLevelDatDumpCommand(
+    requestedWorldName: string | undefined,
+    options: WorldLevelDatDumpCommandOptions,
+): Promise<void> {
+    const { projectRoot, config } = await loadBlurConfig(process.cwd());
+    const debug = createDebugLogger(resolveDebugEnabled(options.debug));
+    const target = resolveWorldLevelDatTarget(
+        projectRoot,
+        config,
+        requestedWorldName,
+        options.path,
+    );
+
+    if (!(await exists(target.levelDatPath))) {
+        const message = `Cannot dump level.dat because ${target.sourceDescription} does not exist.`;
+        throw new Error(
+            target.usesConfiguredWorldSource
+                ? appendWorldSourceHint(config, target.worldName, message)
+                : message,
+        );
+    }
+
+    if (!(await isDirectory(path.dirname(target.levelDatPath)))) {
+        throw new Error(
+            appendWorldSourceHint(
+                config,
+                target.worldName,
+                `Cannot dump level.dat because ${target.sourceDescription} does not exist.`,
+            ),
+        );
+    }
+
+    debug.log("world", "reading level.dat", {
+        worldName: target.worldName,
+        levelDatPath: target.levelDatPath,
+        format: options.format ?? "simplified",
+        requestedPath:
+            typeof options.path === "string"
+                ? trimSurroundingQuotes(options.path)
+                : undefined,
+    });
+
+    const levelDat = await readBedrockLevelDatFile(target.levelDatPath);
+    const dump = createBedrockLevelDatDump(
+        levelDat,
+        options.format ?? "simplified",
+    );
+
+    if (options.output) {
+        await writeJson(options.output, dump);
+        console.log(
+            `[world] Wrote level.dat dump for "${target.worldName}" to ${options.output}.`,
+        );
+        return;
+    }
+
+    console.log(JSON.stringify(dump, null, 2));
+}
+
+export async function runWorldLevelDatEditCommand(
+    requestedWorldName: string | undefined,
+    options: WorldLevelDatEditCommandOptions,
+    runtime: WorldLevelDatEditCommandRuntime = {},
+): Promise<void> {
+    const { projectRoot, config } = await loadBlurConfig(process.cwd());
+    const debug = createDebugLogger(resolveDebugEnabled(options.debug));
+    const target = resolveWorldLevelDatTarget(
+        projectRoot,
+        config,
+        requestedWorldName,
+        options.path,
+    );
+
+    if (!(runtime.canPrompt ?? canPromptForWorldCommand)()) {
+        throw new Error(
+            "Interactive level.dat editing requires an interactive terminal.",
+        );
+    }
+
+    if (!(await exists(target.levelDatPath))) {
+        const message = `Cannot edit level.dat because ${target.sourceDescription} does not exist.`;
+        throw new Error(
+            target.usesConfiguredWorldSource
+                ? appendWorldSourceHint(config, target.worldName, message)
+                : message,
+        );
+    }
+
+    await assertWorldLevelDatEditIsSafe(projectRoot, target.worldName);
+
+    debug.log("world", "editing level.dat", {
+        worldName: target.worldName,
+        levelDatPath: target.levelDatPath,
+        backup: options.backup ?? true,
+        requestedPath:
+            typeof options.path === "string"
+                ? trimSurroundingQuotes(options.path)
+                : undefined,
+    });
+
+    const levelDat = await readBedrockLevelDatFile(target.levelDatPath);
+    const prompt = runtime.prompt ?? createInteractivePrompt();
+    let result;
+    try {
+        result = await editBedrockLevelDatInteractively({
+            worldName: target.worldName,
+            levelDat,
+            prompt,
+        });
+    } finally {
+        prompt.close?.();
+    }
+
+    if (!result.saved) {
+        console.log(
+            result.changed
+                ? `[world] Discarded unsaved level.dat changes for "${target.worldName}".`
+                : `[world] Closed level.dat editor for "${target.worldName}" without changes.`,
+        );
+        return;
+    }
+
+    if (!result.changed) {
+        console.log(
+            `[world] No level.dat changes saved for "${target.worldName}".`,
+        );
+        return;
+    }
+
+    const writeResult = await writeBedrockLevelDatFile(
+        target.levelDatPath,
+        {
+            storageVersion: levelDat.storageVersion,
+            data: levelDat.data,
+        },
+        {
+            backup: options.backup,
+        },
+    );
+    const backupSuffix = writeResult.backupPath
+        ? ` Backup: ${writeResult.backupPath}.`
+        : "";
+    console.log(
+        `[world] Saved ${result.changedPaths.length} level.dat change(s) for "${target.worldName}".${backupSuffix}`,
+    );
 }
 
 export async function runWorldListCommand(

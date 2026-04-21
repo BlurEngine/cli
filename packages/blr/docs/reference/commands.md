@@ -80,7 +80,9 @@ When watch mode is active:
 - runtime source changes trigger a rebuild and local-server `reload`
 - behavior-pack and resource-pack changes trigger a rebuild and resync without sending `reload`
 - `blr.config.json` and `package.json` are not watched by default; if you add them to `dev.watch.paths`, `blr` tells you to restart `dev` instead of reloading
-- `watch-allowlist` watches runtime BDS `allowlist.json` and copies it back into `server/allowlist.json`
+- `watch-allowlist` watches runtime BDS server-state files and copies them back into project state:
+  `allowlist.json` -> `server/allowlist.json`
+  `permissions.json` -> `server/permissions.json`
 - `watch-world` watches the project world source for restart/reset triggers and captures the runtime BDS world back into that project world source on shutdown
 - `watch-world` starts only after startup world reconciliation is complete
 - `watch-world` requires the project world source to contain a valid Bedrock world (`db/` directory)
@@ -164,7 +166,7 @@ Flags:
 - `--watch [enabled]`: enable or disable watch mode
 - `--watch-scripts [enabled]`: enable or disable source/packs watch and rebuild-reload behavior
 - `--watch-world [enabled]`: enable or disable runtime world capture back into the project world source
-- `--watch-allowlist [enabled]`: enable or disable runtime allowlist capture back into project state
+- `--watch-allowlist [enabled]`: enable or disable runtime server-state capture back into project state
 - `--production [enabled]`: enable or disable production bundling
 - `--minecraft-product <product>`: override local deploy target
 - `--minecraft-development-path <path>`: override local deploy root
@@ -466,6 +468,62 @@ Flags:
 
 - `--debug [enabled]`: enable or disable debug logs for world backend activity
 
+### `blr world level-dat dump`
+
+Dumps the selected world's Bedrock `level.dat` file as JSON.
+
+Syntax:
+
+```text
+blr world level-dat dump [worldName]
+```
+
+Behavior:
+
+- resolves the selected project world source using the same world-selection rules as other `blr world` commands
+- also accepts a path-like positional argument or `--path` that points to a world directory or an explicit `level.dat` file
+- reads `<worldSourcePath>/level.dat`
+- parses the Bedrock `level.dat` 8-byte header and the little-endian NBT payload
+- defaults to `simplified` output, which is easier to read but drops NBT type metadata
+- supports `typed` output, which preserves tag types and the root tag shape for future round-trip editing work
+- prints JSON to stdout by default
+- writes JSON to a file when `--output` is provided
+- if the local world source is missing for an S3-backed project, the error points back to `blr world pull`
+
+Flags:
+
+- `--path <path>`: read `level.dat` from a world directory or explicit `level.dat` path
+- `--format <format>`: `simplified | typed`
+- `--output <path>`: write the JSON dump to a file instead of stdout
+- `--debug [enabled]`: enable or disable debug logs for world `level.dat` activity
+
+### `blr world level-dat edit`
+
+Interactively edits scalar Bedrock `level.dat` fields.
+
+Syntax:
+
+```text
+blr world level-dat edit [worldName]
+```
+
+Behavior:
+
+- resolves the selected project world source using the same world-selection rules as other `blr world` commands
+- also accepts a path-like positional argument or `--path` that points to a world directory or an explicit `level.dat` file
+- opens a searchable interactive editor over the parsed Bedrock `level.dat` compound tree
+- supports navigating nested compound tags, editing scalar `byte`, `short`, `int`, `long`, `float`, `double`, and `string` values, adding new scalar or compound fields, and removing existing fields
+- currently treats list and array tags as read-only and prints a short note when you try to edit them
+- creates a timestamped backup next to `level.dat` before saving by default
+- refuses to edit while an active `blr dev` session is running `watch-world` for the same world
+- requires an interactive terminal
+
+Flags:
+
+- `--path <path>`: read `level.dat` from a world directory or explicit `level.dat` path
+- `--backup [enabled]`: create or skip a backup before saving changes
+- `--debug [enabled]`: enable or disable debug logs for world `level.dat` activity
+
 ### `blr world versions`
 
 Lists remote object versions for the selected world when bucket versioning is enabled.
@@ -615,6 +673,11 @@ Examples:
 blr world use "Creative Sandbox"
 blr world list
 blr world status
+blr world level-dat edit
+blr world level-dat edit --path ./worlds/Bedrock level
+blr world level-dat dump
+blr world level-dat dump --path ./worlds/Bedrock level
+blr world level-dat dump --format typed --output .tmp/level.dat.json
 blr world versions
 blr world capture
 blr world capture --force true

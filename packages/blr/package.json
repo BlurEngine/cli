@@ -59,8 +59,11 @@
     "chokidar": "^4.0.3",
     "commander": "^14.0.3",
     "esbuild": "^0.27.4",
+    "kleur": "^3.0.3",
     "picomatch": "^4.0.3",
-    "prompts": "^2.4.2"
+    "prismarine-nbt": "^2.8.0",
+    "prompts": "^2.4.2",
+    "sisteransi": "^1.0.5"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",

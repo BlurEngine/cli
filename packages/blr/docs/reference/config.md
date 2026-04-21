@@ -393,6 +393,9 @@ Notes:
   - `backup`: move the existing runtime world into `worlds_backups/` and then replace it
 - runtime-world replacement and backup only happen before BDS starts; `blr` does not modify a running server world
 - `watch-world` starts after startup reconciliation and captures runtime world state back into the project source
+- `watch-allowlist` captures both retained runtime server-state files:
+  - `allowlist.json`
+  - `permissions.json`
 - optional newer-remote prompts can be silenced for 24 hours on a per-world basis
 - per-run CLI overrides:
   - `--local-server-behavior-pack`

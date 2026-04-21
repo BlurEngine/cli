@@ -6,6 +6,8 @@ import AdmZip from "adm-zip";
 import {
     backupRuntimeWorldForBdsStartup,
     bootstrapProjectWorldSourceFromBds,
+    captureAllowlistFromBds,
+    capturePermissionsFromBds,
     ensureBds,
     prefetchBdsArchive,
 } from "../src/bds.js";
@@ -489,6 +491,64 @@ test("bootstrapProjectWorldSourceFromBds waits when neither a valid project sour
     assert.equal(
         await pathExists(path.join(worldSourceDirectory, "db")),
         false,
+    );
+});
+
+test("captureAllowlistFromBds copies runtime allowlist state back into the project server directory", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-bds-capture-allowlist-",
+    );
+    const serverDirectory = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        "1.26.3.1",
+        "server",
+    );
+    await mkdir(serverDirectory, { recursive: true });
+    await writeFile(
+        path.join(serverDirectory, "allowlist.json"),
+        '[{"xuid":"1","name":"Supah","ignoresPlayerLimit":false}]',
+    );
+
+    await captureAllowlistFromBds(projectRoot, serverDirectory);
+
+    assert.equal(
+        await readFile(
+            path.join(projectRoot, "server", "allowlist.json"),
+            "utf8",
+        ),
+        '[{"xuid":"1","name":"Supah","ignoresPlayerLimit":false}]',
+    );
+});
+
+test("capturePermissionsFromBds copies runtime permissions state back into the project server directory", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-bds-capture-permissions-",
+    );
+    const serverDirectory = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        "1.26.3.1",
+        "server",
+    );
+    await mkdir(serverDirectory, { recursive: true });
+    await writeFile(
+        path.join(serverDirectory, "permissions.json"),
+        '[{"xuid":"1","permission":"operator"}]',
+    );
+
+    await capturePermissionsFromBds(projectRoot, serverDirectory);
+
+    assert.equal(
+        await readFile(
+            path.join(projectRoot, "server", "permissions.json"),
+            "utf8",
+        ),
+        '[{"xuid":"1","permission":"operator"}]',
     );
 });
 

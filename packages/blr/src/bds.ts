@@ -889,26 +889,52 @@ export async function captureAllowlistFromBds(
     serverDirectory: string,
     debug?: DebugLogger,
 ): Promise<void> {
-    const sourcePath = path.join(serverDirectory, "allowlist.json");
+    await captureProjectServerStateFileFromBds(
+        projectRoot,
+        serverDirectory,
+        "allowlist.json",
+        debug,
+    );
+}
+
+export async function capturePermissionsFromBds(
+    projectRoot: string,
+    serverDirectory: string,
+    debug?: DebugLogger,
+): Promise<void> {
+    await captureProjectServerStateFileFromBds(
+        projectRoot,
+        serverDirectory,
+        "permissions.json",
+        debug,
+    );
+}
+
+async function captureProjectServerStateFileFromBds(
+    projectRoot: string,
+    serverDirectory: string,
+    fileName: "allowlist.json" | "permissions.json",
+    debug?: DebugLogger,
+): Promise<void> {
+    const sourcePath = path.join(serverDirectory, fileName);
     if (!(await exists(sourcePath))) {
         debug?.log(
             "bds",
-            "skipped allowlist capture because runtime file is missing",
+            "skipped server state capture because runtime file is missing",
             {
                 sourcePath,
+                fileName,
             },
         );
         return;
     }
 
-    const targetPath = resolveProjectServerStatePath(
-        projectRoot,
-        "allowlist.json",
-    );
+    const targetPath = resolveProjectServerStatePath(projectRoot, fileName);
     await writeText(targetPath, await readText(sourcePath));
-    debug?.log("bds", "captured runtime allowlist into project state", {
+    debug?.log("bds", "captured runtime server state into project state", {
         sourcePath,
         targetPath,
+        fileName,
     });
 }
 

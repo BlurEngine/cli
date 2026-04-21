@@ -6,6 +6,7 @@ import {
     backupRuntimeWorldForBdsStartup,
     bootstrapProjectWorldSourceFromBds,
     captureAllowlistFromBds,
+    capturePermissionsFromBds,
     captureWorldSourceFromBds,
     prefetchBdsArchive,
     replaceRuntimeWorldFromProjectSource,
@@ -2113,17 +2114,20 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         console.log("[dev] Watching for changes...");
     };
 
-    const captureRuntimeAllowlist = async () => {
+    const captureRuntimeServerState = async () => {
         const state = localServer?.resolvedState;
         if (!state) {
             return;
         }
 
-        await captureAllowlistFromBds(
-            projectRoot,
-            state.serverDirectory,
-            debug,
-        );
+        await Promise.all([
+            captureAllowlistFromBds(projectRoot, state.serverDirectory, debug),
+            capturePermissionsFromBds(
+                projectRoot,
+                state.serverDirectory,
+                debug,
+            ),
+        ]);
     };
 
     const enqueueAllowlistCapture = () => {
@@ -2140,12 +2144,12 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             do {
                 allowlistCapturePending = false;
                 try {
-                    await captureRuntimeAllowlist();
+                    await captureRuntimeServerState();
                 } catch (error) {
                     const message =
                         error instanceof Error ? error.message : String(error);
                     console.error(
-                        `[dev] failed to capture runtime allowlist: ${message}`,
+                        `[dev] failed to capture runtime server state: ${message}`,
                     );
                 }
             } while (allowlistCapturePending && !shuttingDown);
@@ -2161,11 +2165,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         }
 
         if (resolved.watchAllowlist) {
-            await captureAllowlistFromBds(
-                projectRoot,
-                state.serverDirectory,
-                debug,
-            );
+            await captureRuntimeServerState();
         }
 
         if (
@@ -2619,12 +2619,14 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             const normalizedPath = normalizeWatchPath(targetPath);
             if (
                 !normalizedPath.endsWith("/allowlist.json") &&
-                normalizedPath !== "allowlist.json"
+                normalizedPath !== "allowlist.json" &&
+                !normalizedPath.endsWith("/permissions.json") &&
+                normalizedPath !== "permissions.json"
             ) {
                 return;
             }
 
-            debug.log("watch", "received runtime allowlist event", {
+            debug.log("watch", "received runtime server state event", {
                 eventName,
                 targetPath,
             });

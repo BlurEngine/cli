@@ -256,7 +256,7 @@
         },
         "allowlistEnabledByDefault": {
           "type": "boolean",
-          "description": "Default interactive selection for `watch-allowlist`."
+          "description": "Default interactive selection for runtime server-state capture (`allowlist.json` and `permissions.json`)."
         }
       },
       "additionalProperties": false,

@@ -181,7 +181,7 @@ export interface BlurConfigWatchFile {
      */
     worldEnabledByDefault?: boolean;
     /**
-     * Default interactive selection for `watch-allowlist`.
+     * Default interactive selection for runtime server-state capture (`allowlist.json` and `permissions.json`).
      */
     allowlistEnabledByDefault?: boolean;
 }

@@ -17,6 +17,8 @@ import {
 import { runUpgradeCommand } from "./commands/upgrade.js";
 import {
     runWorldCaptureCommand,
+    runWorldLevelDatEditCommand,
+    runWorldLevelDatDumpCommand,
     runWorldListCommand,
     runWorldLockCommand,
     runWorldPullCommand,
@@ -50,6 +52,17 @@ function parseOptionalBoolean(value: string | boolean | undefined): boolean {
     }
     throw new InvalidOptionArgumentError(
         `Expected boolean value for option, received "${value}". Use true or false.`,
+    );
+}
+
+function parseLevelDatDumpFormat(value: string): "simplified" | "typed" {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "simplified" || normalized === "typed") {
+        return normalized;
+    }
+
+    throw new InvalidOptionArgumentError(
+        `Expected level.dat dump format to be "simplified" or "typed", received "${value}".`,
     );
 }
 
@@ -171,7 +184,7 @@ async function main(): Promise<void> {
         )
         .option(
             "--watch-allowlist [enabled]",
-            "Enable or disable runtime allowlist capture back into project state",
+            "Enable or disable runtime server-state capture back into project state",
             parseOptionalBoolean,
         )
         .option(
@@ -398,6 +411,9 @@ async function main(): Promise<void> {
     const world = program
         .command("world")
         .description("Manage project world sources and remote backends.");
+    const worldLevelDat = world
+        .command("level-dat")
+        .description("Inspect the Bedrock level.dat file for a project world.");
 
     world
         .command("use")
@@ -485,6 +501,70 @@ async function main(): Promise<void> {
                 opts: Record<string, unknown>,
             ) => {
                 await runWorldVersionsCommand(worldName, opts as any);
+            },
+        );
+
+    worldLevelDat
+        .command("edit")
+        .description("Interactively edit scalar Bedrock level.dat fields.")
+        .argument(
+            "[worldName]",
+            "World name or path to a world directory/level.dat file. Defaults to dev.localServer.worldName",
+        )
+        .option(
+            "--path <path>",
+            "Read level.dat from a world directory or explicit level.dat path",
+        )
+        .option(
+            "--backup [enabled]",
+            "Create or skip a backup before saving changes (default: true)",
+            parseOptionalBoolean,
+        )
+        .option(
+            "--debug [enabled]",
+            "Enable or disable debug logs for world level.dat activity",
+            parseOptionalBoolean,
+        )
+        .action(
+            async (
+                worldName: string | undefined,
+                opts: Record<string, unknown>,
+            ) => {
+                await runWorldLevelDatEditCommand(worldName, opts as any);
+            },
+        );
+
+    worldLevelDat
+        .command("dump")
+        .description("Dump Bedrock level.dat data as JSON for debugging.")
+        .argument(
+            "[worldName]",
+            "World name or path to a world directory/level.dat file. Defaults to dev.localServer.worldName",
+        )
+        .option(
+            "--path <path>",
+            "Read level.dat from a world directory or explicit level.dat path",
+        )
+        .option(
+            "--format <format>",
+            "simplified | typed",
+            parseLevelDatDumpFormat,
+        )
+        .option(
+            "--output <path>",
+            "Write the JSON dump to a file instead of stdout",
+        )
+        .option(
+            "--debug [enabled]",
+            "Enable or disable debug logs for world level.dat activity",
+            parseOptionalBoolean,
+        )
+        .action(
+            async (
+                worldName: string | undefined,
+                opts: Record<string, unknown>,
+            ) => {
+                await runWorldLevelDatDumpCommand(worldName, opts as any);
             },
         );
 
