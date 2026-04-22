@@ -107,6 +107,48 @@ export type WorldSourceBootstrapResult =
     | "copied"
     | "waiting-for-runtime";
 
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function setServerProperty(text: string, key: string, value: string): string {
+    const pattern = new RegExp(`^${escapeRegExp(key)}=.*$`, "m");
+    if (pattern.test(text)) {
+        return text.replace(pattern, `${key}=${value}`);
+    }
+    if (text.length > 0 && !text.endsWith("\n")) {
+        text += "\n";
+    }
+    return `${text}${key}=${value}\n`;
+}
+
+function applyServerPropertiesOverlay(
+    text: string,
+    overlayText: string,
+): string {
+    let nextText = text;
+    for (const line of overlayText.split(/\r?\n/u)) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0 || trimmed.startsWith("#")) {
+            continue;
+        }
+
+        const separatorIndex = line.indexOf("=");
+        if (separatorIndex <= 0) {
+            continue;
+        }
+
+        const key = line.slice(0, separatorIndex).trim();
+        if (key.length === 0) {
+            continue;
+        }
+
+        const value = line.slice(separatorIndex + 1).trim();
+        nextText = setServerProperty(nextText, key, value);
+    }
+    return nextText;
+}
+
 function resolveBdsPlatform(
     platform: BlurMachineSettings["localServer"]["platform"],
 ): BdsPlatform {
@@ -348,37 +390,62 @@ async function downloadIfMissing(
 }
 
 async function updateServerProperties(
+    projectRoot: string,
     serverDirectory: string,
     worldName: string,
     permissionLevel: PermissionLevel,
     gamemode: string,
+    debug?: DebugLogger,
 ): Promise<void> {
     const propertiesPath = path.join(serverDirectory, "server.properties");
-    if (!(await exists(propertiesPath))) {
+    const projectPropertiesPath = resolveProjectServerStatePath(
+        projectRoot,
+        "server.properties",
+    );
+    const [runtimePropertiesExist, projectPropertiesExist] = await Promise.all([
+        exists(propertiesPath),
+        exists(projectPropertiesPath),
+    ]);
+    if (!runtimePropertiesExist && !projectPropertiesExist) {
         return;
     }
 
-    let text = await readText(propertiesPath);
-    const setProperty = (key: string, value: string) => {
-        const pattern = new RegExp(`^${key}=.*$`, "m");
-        if (pattern.test(text)) {
-            text = text.replace(pattern, `${key}=${value}`);
-            return;
-        }
-        if (!text.endsWith("\n")) {
-            text += "\n";
-        }
-        text += `${key}=${value}\n`;
-    };
+    const projectPropertiesText = projectPropertiesExist
+        ? await readText(projectPropertiesPath)
+        : undefined;
+    let text = runtimePropertiesExist
+        ? await readText(propertiesPath)
+        : (projectPropertiesText ?? "");
 
-    setProperty("allow-cheats", "true");
-    setProperty("allow-list", "true");
-    setProperty("level-name", worldName);
-    setProperty("default-player-permission-level", permissionLevel);
-    setProperty("gamemode", gamemode);
-    setProperty("content-log-file-enabled", "true");
-    setProperty("content-log-console-output-enabled", "true");
+    if (runtimePropertiesExist && typeof projectPropertiesText === "string") {
+        text = applyServerPropertiesOverlay(text, projectPropertiesText);
+    }
+
+    text = setServerProperty(text, "allow-cheats", "true");
+    text = setServerProperty(text, "allow-list", "true");
+    text = setServerProperty(text, "level-name", worldName);
+    text = setServerProperty(
+        text,
+        "default-player-permission-level",
+        permissionLevel,
+    );
+    text = setServerProperty(text, "gamemode", gamemode);
+    text = setServerProperty(text, "content-log-file-enabled", "true");
+    text = setServerProperty(
+        text,
+        "content-log-console-output-enabled",
+        "true",
+    );
     await writeText(propertiesPath, text);
+    debug?.log("bds", "updated runtime server.properties", {
+        projectPropertiesPath: projectPropertiesExist
+            ? projectPropertiesPath
+            : undefined,
+        runtimePropertiesPath: propertiesPath,
+        worldName,
+        permissionLevel,
+        gamemode,
+    });
 }
 
 async function readProjectAllowlist(
@@ -517,10 +584,12 @@ async function extractIfMissing(
             executablePath: state.executablePath,
         });
         await updateServerProperties(
+            projectRoot,
             state.serverDirectory,
             state.worldName,
             config.dev.localServer.defaultPermissionLevel,
             config.dev.localServer.gamemode,
+            debug,
         );
         await upsertAllowlist(
             state.serverDirectory,
@@ -593,10 +662,12 @@ async function extractIfMissing(
         serverDirectory: state.serverDirectory,
     });
     await updateServerProperties(
+        projectRoot,
         state.serverDirectory,
         state.worldName,
         config.dev.localServer.defaultPermissionLevel,
         config.dev.localServer.gamemode,
+        debug,
     );
     await upsertAllowlist(
         state.serverDirectory,

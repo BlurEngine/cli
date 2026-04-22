@@ -176,7 +176,7 @@ function renderReadme(
               ]
             : []),
         `- \`worlds/${DEFAULT_BDS_WORLD_NAME}/\` -> optional raw project world source when you choose to keep one locally`,
-        "- `server/` -> optional retained server state such as allowlist and permissions",
+        "- `server/` -> optional retained server state such as server.properties, allowlist, permissions, and executable overrides",
         "- `dist/` -> generated staged build output and packaged artifacts",
         "- `.blr/` -> local CLI runtime workspace, cache, and dev state",
     ];
@@ -206,7 +206,7 @@ function renderReadme(
         "- keep shared project settings in `blr.config.json`",
         "- keep secrets and machine-local overrides in `.env.local`",
         "- world-aware flows require that folder to contain a real Bedrock world with a `db/` directory.",
-        "- `server/allowlist.json` and `server/permissions.json` are optional project state files that `blr` applies to BDS when present.",
+        "- `server/server.properties`, `server/allowlist.json`, and `server/permissions.json` are optional project state files that `blr` applies to BDS when present.",
         ...(features.scripts && !features.bebe
             ? [
                   "- scripting is enabled without `@blurengine/bebe`; add it later if you want the BlurEngine runtime helpers.",

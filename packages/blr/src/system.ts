@@ -87,6 +87,7 @@ type LoadedProjectInspection = {
     serverState: {
         allowlistExists: boolean;
         permissionsExists: boolean;
+        serverPropertiesExists: boolean;
     };
 };
 
@@ -184,6 +185,7 @@ export type SystemInfo = {
         serverState?: {
             allowlistExists: boolean;
             permissionsExists: boolean;
+            serverPropertiesExists: boolean;
         };
         root?: string;
         configPath?: string;
@@ -455,14 +457,27 @@ async function inspectProject(
                       );
         }
 
-        const [allowlistExists, permissionsExists] = await Promise.all([
-            exists(
-                resolveProjectServerStatePath(projectRoot, "allowlist.json"),
-            ),
-            exists(
-                resolveProjectServerStatePath(projectRoot, "permissions.json"),
-            ),
-        ]);
+        const [allowlistExists, permissionsExists, serverPropertiesExists] =
+            await Promise.all([
+                exists(
+                    resolveProjectServerStatePath(
+                        projectRoot,
+                        "allowlist.json",
+                    ),
+                ),
+                exists(
+                    resolveProjectServerStatePath(
+                        projectRoot,
+                        "permissions.json",
+                    ),
+                ),
+                exists(
+                    resolveProjectServerStatePath(
+                        projectRoot,
+                        "server.properties",
+                    ),
+                ),
+            ]);
 
         return {
             detected: true,
@@ -480,6 +495,7 @@ async function inspectProject(
                 serverState: {
                     allowlistExists,
                     permissionsExists,
+                    serverPropertiesExists,
                 },
             },
         };
@@ -944,7 +960,7 @@ function renderProjectInfoLines(info: SystemInfo): string[] {
             : []),
         ...(project.serverState
             ? [
-                  `server state: allowlist=${project.serverState.allowlistExists}, permissions=${project.serverState.permissionsExists}`,
+                  `server state: allowlist=${project.serverState.allowlistExists}, permissions=${project.serverState.permissionsExists}, properties=${project.serverState.serverPropertiesExists}`,
               ]
             : []),
         ...(project.root ? [`project root: ${project.root}`] : []),

@@ -219,6 +219,105 @@ test("ensureBds applies server/bedrock_server.exe as a custom local-server overr
     assert.equal(state.customExecutableSourcePath, customExecutablePath);
 });
 
+test("ensureBds overlays server/server.properties onto the runtime file while keeping managed dev settings", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-bds-properties-");
+    const version = "1.26.3.1";
+    const runtimeServerDirectory = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        version,
+        "server",
+    );
+    const runtimePropertiesPath = path.join(
+        runtimeServerDirectory,
+        "server.properties",
+    );
+    const projectPropertiesPath = path.join(
+        projectRoot,
+        "server",
+        "server.properties",
+    );
+
+    await mkdir(path.join(runtimeServerDirectory, "config", "default"), {
+        recursive: true,
+    });
+    await writeFile(
+        path.join(runtimeServerDirectory, "bedrock_server.exe"),
+        "stock executable",
+    );
+    await writeFile(
+        runtimePropertiesPath,
+        [
+            "server-name=Stock Server",
+            "compression-threshold=1",
+            "allow-cheats=false",
+            "allow-list=false",
+            "level-name=Bedrock level",
+            "default-player-permission-level=operator",
+            "gamemode=creative",
+            "",
+        ].join("\n"),
+    );
+    await mkdir(path.dirname(projectPropertiesPath), { recursive: true });
+    await writeFile(
+        projectPropertiesPath,
+        [
+            "# project overrides",
+            "server-name=Team Server",
+            "texturepack-required=true",
+            "allow-cheats=false",
+            "",
+        ].join("\n"),
+    );
+
+    t.mock.method(globalThis, "fetch", async () => {
+        throw new Error("fetch should not be called");
+    });
+
+    await ensureBds(
+        projectRoot,
+        {
+            minecraft: {
+                channel: "stable",
+            },
+            dev: {
+                localServer: {
+                    worldName: "Creative Sandbox",
+                    worldSourcePath: "worlds/Creative Sandbox",
+                    defaultPermissionLevel: "member",
+                    gamemode: "survival",
+                    allowlist: [],
+                    operators: [],
+                },
+            },
+            world: {
+                backend: "local",
+            },
+        } as any,
+        {
+            localServer: {
+                bdsVersion: version,
+                platform: "win",
+                cacheDirectory: ".blr/cache/bds",
+                serverDirectory: `.blr/bds/${version}/server`,
+            },
+        } as any,
+    );
+
+    const text = await readFile(runtimePropertiesPath, "utf8");
+    assert.match(text, /^server-name=Team Server$/m);
+    assert.match(text, /^texturepack-required=true$/m);
+    assert.match(text, /^compression-threshold=1$/m);
+    assert.match(text, /^allow-cheats=true$/m);
+    assert.match(text, /^allow-list=true$/m);
+    assert.match(text, /^level-name=Creative Sandbox$/m);
+    assert.match(text, /^default-player-permission-level=member$/m);
+    assert.match(text, /^gamemode=survival$/m);
+    assert.match(text, /^content-log-file-enabled=true$/m);
+    assert.match(text, /^content-log-console-output-enabled=true$/m);
+});
+
 test("prefetchBdsArchive downloads the archive without extracting the server", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-bds-prefetch-");
     const version = "1.26.3.1";

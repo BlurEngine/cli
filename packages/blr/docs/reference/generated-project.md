@@ -184,6 +184,22 @@ If present, `blr` applies it to BDS permissions state.
 
 If `watch-allowlist` is enabled, runtime BDS permissions changes are copied back into this file during `blr dev`.
 
+### `server/server.properties`
+
+Optional project state file.
+
+If present, `blr` overlays its authored properties onto the runtime BDS `server.properties` file before startup.
+
+`blr` still forces its managed local-server keys after the overlay:
+
+- `allow-cheats`
+- `allow-list`
+- `level-name`
+- `default-player-permission-level`
+- `gamemode`
+- `content-log-file-enabled`
+- `content-log-console-output-enabled`
+
 ### `server/bedrock_server.exe`
 
 Optional project state file for Windows local-server runs.

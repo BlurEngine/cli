@@ -381,6 +381,7 @@ Notes:
 - `blr world use <worldName>` updates the configured active world and keeps the default `worlds/<worldName>` source-path convention unless the project has an explicit custom `worldSourcePath`
 - `copy.*` controls whether the current project pack types are copied into the runtime server
 - `attach.*` controls whether the current project pack ids are written into world hook files
+- if `server/server.properties` exists, `blr` overlays its authored properties onto the runtime BDS `server.properties` file before forcing the managed `level-name`, `allow-list`, permission, gamemode, and content-log settings needed for `blr dev`
 - if a pack type is disabled for copy or attach, `blr` removes only this project's corresponding staged/runtime output and preserves unrelated existing world pack entries
 - `worldSync.projectWorldMode` controls how `blr dev` handles remote project-world updates for versioned S3 worlds:
   - `prompt`: prompt when a newer remote world exists, and prompt or fail when a required pull is needed

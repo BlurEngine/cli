@@ -2,7 +2,10 @@ import path from "node:path";
 
 export const PROJECT_SERVER_STATE_ROOT = "server";
 
-type ProjectServerStateFile = "allowlist.json" | "permissions.json";
+type ProjectServerStateFile =
+    | "allowlist.json"
+    | "permissions.json"
+    | "server.properties";
 
 export function resolveProjectServerStatePath(
     projectRoot: string,
