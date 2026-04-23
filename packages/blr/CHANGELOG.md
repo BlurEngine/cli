@@ -1,5 +1,17 @@
 # @blurengine/cli
 
+## 0.5.1
+
+### Patch Changes
+
+- [`6a6048a`](https://github.com/BlurEngine/cli/commit/6a6048a510d2643a9d34c83e6f0b089a4e9c3c48) Thanks [@SupaHam](https://github.com/SupaHam)! - Fix `blr world level-dat dump` and `edit` when they receive explicit relative
+  paths through `npm run` from a nested project directory.
+
+  `blr` now resolves those explicit `level.dat` paths from the original shell
+  working directory when npm provides it, while still ignoring unrelated
+  `INIT_CWD` values that point outside the current project. Tests now cover both
+  the nested invocation case and the outside-project fallback behavior.
+
 ## 0.5.0
 
 ### Minor Changes
