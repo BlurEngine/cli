@@ -1,5 +1,17 @@
 # @blurengine/cli
 
+## 0.5.0
+
+### Minor Changes
+
+- [`36b6831`](https://github.com/BlurEngine/cli/commit/36b6831e6fd574d6148000be77c3922d4e083257) Thanks [@SupaHam](https://github.com/SupaHam)! - Allow projects to provide `server/server.properties` for local-server runs.
+
+  `blr` now overlays project-owned `server/server.properties` onto the runtime
+  BDS `server.properties` file while still forcing the managed settings needed
+  for `blr dev`, such as the active world name, permission level, gamemode, and
+  content-log settings. Documentation and tests now cover the new project
+  server-state surface.
+
 ## 0.4.0
 
 ### Minor Changes
