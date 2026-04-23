@@ -82,13 +82,20 @@ export function getBuiltCliEntry(): string {
 export function runBuiltCli(
     args: string[],
     cwd: string,
+    options: {
+        env?: NodeJS.ProcessEnv;
+    } = {},
 ): SpawnSyncReturns<string> {
+    const inheritedEnv = { ...process.env };
+    delete inheritedEnv.INIT_CWD;
+
     return spawnSync(process.execPath, [getBuiltCliEntry(), ...args], {
         cwd,
         encoding: "utf8",
         env: {
-            ...process.env,
+            ...inheritedEnv,
             BLR_CREATE_SKIP_REMOTE_MINECRAFT_VERSION_LOOKUP: "1",
+            ...options.env,
         },
     });
 }

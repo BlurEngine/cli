@@ -250,6 +250,73 @@ test("blr world level-dat dump accepts a path-like positional argument", async (
     });
 });
 
+test("blr world level-dat dump ignores INIT_CWD outside the project root for explicit paths", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-level-dat-");
+    await createMinimalProject(projectRoot, "Bedrock level");
+    await writeWorldLevelDat(projectRoot, "Bedrock level");
+
+    const result = runBuiltCli(
+        ["world", "level-dat", "dump", "./worlds/Bedrock level/"],
+        projectRoot,
+        {
+            env: {
+                INIT_CWD: path.resolve(projectRoot, ".."),
+            },
+        },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const dumped = JSON.parse(result.stdout) as Record<string, unknown>;
+    assert.equal(dumped.fileType, "bedrock-level-dat");
+    assert.deepEqual(dumped.data, {
+        LevelName: "Bedrock level",
+        GameType: 1,
+        Difficulty: 2,
+        abilities: {
+            mayfly: 1,
+        },
+    });
+});
+
+test("blr world level-dat dump resolves explicit relative paths from INIT_CWD when invoked through npm", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-level-dat-");
+    await createMinimalProject(projectRoot, "Shared World");
+    await writeWorldLevelDat(projectRoot, "Shared World");
+
+    const invocationDirectory = path.join(projectRoot, "testworld");
+    const worldDirectory = path.join(invocationDirectory, "test");
+    await mkdir(path.join(worldDirectory, "db"), { recursive: true });
+    await writeFile(
+        path.join(worldDirectory, "level.dat"),
+        serializeBedrockLevelDat({
+            storageVersion: 10,
+            data: createSampleLevelDatNbt("Nested World"),
+        }),
+    );
+
+    const result = runBuiltCli(
+        ["world", "level-dat", "dump", "./test/"],
+        projectRoot,
+        {
+            env: {
+                INIT_CWD: invocationDirectory,
+            },
+        },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const dumped = JSON.parse(result.stdout) as Record<string, unknown>;
+    assert.equal(dumped.fileType, "bedrock-level-dat");
+    assert.deepEqual(dumped.data, {
+        LevelName: "Nested World",
+        GameType: 1,
+        Difficulty: 2,
+        abilities: {
+            mayfly: 1,
+        },
+    });
+});
+
 test("blr world level-dat dump supports typed output written to a file", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-level-dat-");
     await createMinimalProject(projectRoot, "Creative Sandbox");

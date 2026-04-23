@@ -186,6 +186,45 @@ function trimSurroundingQuotes(value: string): string {
     return trimmed.trim();
 }
 
+function isPathWithinDirectory(rootPath: string, targetPath: string): boolean {
+    const relative = path.relative(rootPath, targetPath);
+    return (
+        relative.length === 0 ||
+        (!relative.startsWith("..") && !path.isAbsolute(relative))
+    );
+}
+
+function resolveCommandInvocationCwd(projectRoot: string): string {
+    const initCwd = process.env.INIT_CWD?.trim();
+    if (!initCwd) {
+        return projectRoot;
+    }
+
+    const resolvedInitCwd = path.isAbsolute(initCwd)
+        ? initCwd
+        : path.resolve(projectRoot, initCwd);
+    return isPathWithinDirectory(projectRoot, resolvedInitCwd)
+        ? resolvedInitCwd
+        : projectRoot;
+}
+
+function formatExplicitLevelDatSourceDescription(input: {
+    requestedPath: string;
+    levelDatPath: string;
+    isExplicitLevelDatFile: boolean;
+}): string {
+    const normalizedRequestedPath = trimSurroundingQuotes(input.requestedPath);
+    if (path.isAbsolute(normalizedRequestedPath)) {
+        return input.levelDatPath.replace(/\\/g, "/");
+    }
+
+    return (
+        input.isExplicitLevelDatFile
+            ? normalizedRequestedPath
+            : path.join(normalizedRequestedPath, "level.dat")
+    ).replace(/\\/g, "/");
+}
+
 function looksLikeWorldPath(value: string): boolean {
     const normalized = trimSurroundingQuotes(value);
     if (normalized.length === 0) {
@@ -210,11 +249,12 @@ type ResolvedWorldLevelDatTarget = {
 
 function resolveWorldLevelDatTargetFromPath(
     projectRoot: string,
+    invocationCwd: string,
     requestedPath: string,
     fallbackWorldName: string,
 ): ResolvedWorldLevelDatTarget {
     const normalizedInput = trimSurroundingQuotes(requestedPath);
-    const resolvedInput = path.resolve(projectRoot, normalizedInput);
+    const resolvedInput = path.resolve(invocationCwd, normalizedInput);
     const isExplicitLevelDatFile =
         path.basename(resolvedInput).toLowerCase() === "level.dat";
     const levelDatPath = isExplicitLevelDatFile
@@ -225,15 +265,15 @@ function resolveWorldLevelDatTargetFromPath(
         : resolvedInput;
     const derivedWorldName =
         path.basename(path.normalize(worldDirectory)) || fallbackWorldName;
-    const relativeLevelDatPath = path.relative(projectRoot, levelDatPath);
 
     return {
         worldName: derivedWorldName,
         levelDatPath,
-        sourceDescription:
-            relativeLevelDatPath.length > 0
-                ? relativeLevelDatPath.replace(/\\/g, "/")
-                : "level.dat",
+        sourceDescription: formatExplicitLevelDatSourceDescription({
+            requestedPath,
+            levelDatPath,
+            isExplicitLevelDatFile,
+        }),
         usesConfiguredWorldSource: false,
     };
 }
@@ -245,6 +285,7 @@ function resolveWorldLevelDatTarget(
     requestedPath: string | undefined,
 ): ResolvedWorldLevelDatTarget {
     const fallbackWorldName = config.dev.localServer.worldName;
+    const invocationCwd = resolveCommandInvocationCwd(projectRoot);
     const normalizedRequestedPath =
         typeof requestedPath === "string" &&
         trimSurroundingQuotes(requestedPath).length > 0
@@ -254,6 +295,7 @@ function resolveWorldLevelDatTarget(
     if (normalizedRequestedPath) {
         return resolveWorldLevelDatTargetFromPath(
             projectRoot,
+            invocationCwd,
             normalizedRequestedPath,
             fallbackWorldName,
         );
@@ -265,6 +307,7 @@ function resolveWorldLevelDatTarget(
     ) {
         return resolveWorldLevelDatTargetFromPath(
             projectRoot,
+            invocationCwd,
             requestedWorldName,
             fallbackWorldName,
         );
