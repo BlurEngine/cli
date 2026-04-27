@@ -1,5 +1,13 @@
 # @blurengine/cli
 
+## 0.6.0
+
+### Minor Changes
+
+- [`d5ce5bd`](https://github.com/BlurEngine/cli/commit/d5ce5bd41f8bd779a5045e2568dfff317433d6f9) Thanks [@SupaHam](https://github.com/SupaHam)! - Add package targets for `.mctemplate`, `.mcworld`, and `.mcaddon` artifacts.
+
+  Breaking change: the old `world-template` package target has been removed. Use `mctemplate` instead; bare `blr package` now defaults to `mctemplate`.
+
 ## 0.5.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@blurengine/cli",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "BlurEngine generator and lifecycle CLI.",
   "author": "Blur Engine Limited",
   "license": "Apache-2.0",
