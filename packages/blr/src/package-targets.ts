@@ -1,16 +1,14 @@
 import type { PackageTarget } from "./types.js";
 
-export const DEFAULT_PACKAGE_TARGET: PackageTarget = "world-template";
+export const DEFAULT_PACKAGE_TARGET: PackageTarget = "mctemplate";
 
 export const SUPPORTED_PACKAGE_TARGETS = [
-    "world-template",
     "mctemplate",
     "mcworld",
     "mcaddon",
 ] as const satisfies readonly PackageTarget[];
 
 export const PACKAGE_TARGETS_REQUIRING_WORLD = [
-    "world-template",
     "mctemplate",
     "mcworld",
 ] as const satisfies readonly PackageTarget[];

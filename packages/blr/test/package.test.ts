@@ -119,7 +119,7 @@ function readZipEntryNames(archivePath: string): string[] {
         .sort();
 }
 
-test("runPackageCommand defaults to world-template output when target is omitted", async (t) => {
+test("runPackageCommand defaults to mctemplate output when target is omitted", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-package-");
     await createPackageProject(projectRoot);
 
@@ -164,6 +164,16 @@ test("runPackageCommand creates mcworld archives from the selected world", async
     assert.ok(entries.includes("world_behavior_packs.json"));
     assert.ok(entries.includes("world_resource_packs.json"));
     assert.equal(entries.includes("manifest.json"), false);
+});
+
+test("runPackageCommand rejects the legacy world-template target", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot);
+
+    await assert.rejects(
+        () => runPackageForTest(projectRoot, "world-template"),
+        /Unsupported package target "world-template"\. Supported targets: mctemplate, mcworld, mcaddon\./,
+    );
 });
 
 test("runPackageCommand creates mcaddon archives without requiring a world source", async (t) => {

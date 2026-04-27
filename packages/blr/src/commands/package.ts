@@ -53,13 +53,6 @@ const PACKAGE_TARGET_DEFINITIONS: Record<
     PackageTarget,
     PackageTargetDefinition
 > = {
-    "world-template": {
-        workspaceDirectoryName: "world_template",
-        outputExtension: "mctemplate",
-        archiveRoot: "world_template",
-        includeWorld: true,
-        writeWorldTemplateManifest: true,
-    },
     mctemplate: {
         workspaceDirectoryName: "world_template",
         outputExtension: "mctemplate",
@@ -147,7 +140,7 @@ function toWorldTemplateManifest(
             lock_template_options: true,
             base_game_version: baseGameVersion,
             uuid: createDeterministicUuid(
-                `${config.project.packageName}:world-template:${worldName}:header`,
+                `${config.project.packageName}:mctemplate:${worldName}:header`,
             ),
         },
         modules: [
@@ -155,7 +148,7 @@ function toWorldTemplateManifest(
                 version,
                 type: "world_template",
                 uuid: createDeterministicUuid(
-                    `${config.project.packageName}:world-template:${worldName}:module`,
+                    `${config.project.packageName}:mctemplate:${worldName}:module`,
                 ),
             },
         ],

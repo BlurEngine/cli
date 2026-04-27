@@ -64,7 +64,7 @@ Committed project-owned raw Bedrock world sources when the project chooses to ke
 These are inputs to:
 
 - local server reset/bootstrap flows
-- world package targets such as `world-template` and `mcworld`
+- world package targets such as `mctemplate` and `mcworld`
 
 Do not confuse this with runtime BDS world state in `.blr/`.
 

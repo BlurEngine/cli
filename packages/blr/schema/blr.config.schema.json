@@ -155,7 +155,7 @@
     },
     "PackageTarget": {
       "type": "string",
-      "enum": ["world-template", "mctemplate", "mcworld", "mcaddon"]
+      "enum": ["mctemplate", "mcworld", "mcaddon"]
     },
     "BlurConfigPackageWorldTemplateFile": {
       "type": "object",

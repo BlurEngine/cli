@@ -106,7 +106,7 @@ Fields:
 Behavior:
 
 - drives the project target version that `blr` uses for:
-  - packaged world-template `base_game_version`
+  - packaged `mctemplate` `base_game_version`
   - default BDS version when no CLI or machine-local env override is provided
 - drives the project Bedrock release channel across:
   - BDS stable vs preview download resolution
@@ -238,7 +238,6 @@ Fields:
 
 Supported values:
 
-- `world-template`
 - `mctemplate`
 - `mcworld`
 - `mcaddon`
@@ -247,8 +246,8 @@ Behavior:
 
 - if `blr package <target>` is passed explicitly, that wins
 - if the target is omitted, `blr` uses `package.defaultTarget` when present
-- if the target is omitted and no config default exists, `blr` uses `world-template` for compatibility with generated package scripts
-- `worldTemplate.include.*` defaults follow project feature presence for `world-template`, `mctemplate`, `mcworld`, and `mcaddon`:
+- if the target is omitted and no config default exists, `blr` uses `mctemplate`
+- `worldTemplate.include.*` defaults follow project feature presence for `mctemplate`, `mcworld`, and `mcaddon`:
   - behavior pack present -> behavior pack included by default
   - resource pack present -> resource pack included by default
 - these defaults can be narrowed per run with:
@@ -378,7 +377,7 @@ Notes:
 
 - `blr dev` uses these values directly during its default config-driven mode
 - `blr create` does not generate an empty world placeholder
-- world-aware commands such as `watch-world`, `package world-template`, and `package mcworld` require that path to contain a real Bedrock world with a `db/` directory
+- world-aware commands such as `watch-world`, `package mctemplate`, and `package mcworld` require that path to contain a real Bedrock world with a `db/` directory
 - `blr dev --world <worldName>` and `blr package --world <worldName>` can override the configured active world for a single run
 - `blr world use <worldName>` updates the configured active world and keeps the default `worlds/<worldName>` source-path convention unless the project has an explicit custom `worldSourcePath`
 - `copy.*` controls whether the current project pack types are copied into the runtime server

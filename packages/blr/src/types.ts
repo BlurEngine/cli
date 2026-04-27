@@ -18,11 +18,7 @@ export type MinecraftProduct =
 export type BdsPlatform = "win" | "linux";
 
 export type PermissionLevel = "visitor" | "member" | "operator" | "custom";
-export type PackageTarget =
-    | "world-template"
-    | "mctemplate"
-    | "mcworld"
-    | "mcaddon";
+export type PackageTarget = "mctemplate" | "mcworld" | "mcaddon";
 
 /**
  * Per-pack feature toggles for behavior-pack and resource-pack automation.

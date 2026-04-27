@@ -236,16 +236,15 @@ blr package [target]
 
 Currently supported targets:
 
-- `world-template`
 - `mctemplate`
 - `mcworld`
 - `mcaddon`
 
-`world-template` and `mctemplate` behavior:
+`mctemplate` behavior:
 
 - runs `build` first
 - reads the selected project world source
-- copies only the staged packs that are present into a world-template package workspace
+- copies only the staged packs that are present into a template package workspace
 - writes `dist/packages/<packName>.mctemplate` for the configured default world
 - writes `dist/packages/<packName>-<worldName>.mctemplate` when packaging a different world with `--world`
 - requires the project world source to contain a valid Bedrock world (`db/` directory)
@@ -272,7 +271,7 @@ Currently supported targets:
 Target resolution:
 
 - if `<target>` is omitted, `blr` resolves the target from `blr.config.json -> package.defaultTarget`
-- if `<target>` is omitted and no config default exists, `blr` uses `world-template` for compatibility with generated package scripts
+- if `<target>` is omitted and no config default exists, `blr` uses `mctemplate`
 
 Flags:
 
@@ -286,12 +285,11 @@ Examples:
 
 ```text
 blr package
-blr package world-template
 blr package mctemplate
 blr package mcworld
 blr package mcaddon
 blr package --world "Creative Sandbox"
-blr package world-template --production
+blr package mctemplate --production
 blr package mcworld --debug
 ```
 
