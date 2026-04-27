@@ -162,7 +162,7 @@ Usage:
 - if `watch-world` is enabled, `blr dev` captures the runtime BDS world back into this folder on shutdown
 - `blr world capture` can seed or refresh this folder from the current runtime BDS world
 - `blr world use <worldName>` can switch the active configured world and create the matching local folder when needed
-- `blr package world-template` uses this as the source world payload
+- `blr package world-template` and `blr package mcworld` use this as the source world payload
 - `blr world pull` can materialize this folder from a remote S3-compatible backend
 - `blr world push` can publish this folder back to the configured remote backend
 - `blr create` does not generate this folder by default because an empty folder looks like a valid world when it is not
@@ -305,6 +305,8 @@ This is the source that `local-deploy`, `local-server`, and packaging targets co
 
 Packaged distributable artifacts.
 
-Current target:
+Current package targets:
 
 - `<packName>.mctemplate` from `blr package`
+- `<packName>.mcworld` from `blr package mcworld`
+- `<packName>.mcaddon` from `blr package mcaddon`

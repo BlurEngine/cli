@@ -233,20 +233,22 @@ Optional project-level packaging defaults.
 Fields:
 
 - `defaultTarget`: default package target used when `blr package` is run without a target
-- `worldTemplate.include.behaviorPack`: include the behavior pack in `world-template` packaging by default
-- `worldTemplate.include.resourcePack`: include the resource pack in `world-template` packaging by default
+- `worldTemplate.include.behaviorPack`: include the behavior pack in package targets that embed staged packs
+- `worldTemplate.include.resourcePack`: include the resource pack in package targets that embed staged packs
 
 Supported values:
 
 - `world-template`
+- `mctemplate`
+- `mcworld`
+- `mcaddon`
 
 Behavior:
 
 - if `blr package <target>` is passed explicitly, that wins
 - if the target is omitted, `blr` uses `package.defaultTarget` when present
-- if the target is omitted and there is only one supported packaging target, `blr` uses that target automatically
-- if the target is omitted and packaging targets become ambiguous in the future, `blr` requires an explicit target or `package.defaultTarget`
-- `worldTemplate.include.*` defaults follow project feature presence:
+- if the target is omitted and no config default exists, `blr` uses `world-template` for compatibility with generated package scripts
+- `worldTemplate.include.*` defaults follow project feature presence for `world-template`, `mctemplate`, `mcworld`, and `mcaddon`:
   - behavior pack present -> behavior pack included by default
   - resource pack present -> resource pack included by default
 - these defaults can be narrowed per run with:
@@ -376,7 +378,7 @@ Notes:
 
 - `blr dev` uses these values directly during its default config-driven mode
 - `blr create` does not generate an empty world placeholder
-- world-aware commands such as `watch-world` and `package world-template` require that path to contain a real Bedrock world with a `db/` directory
+- world-aware commands such as `watch-world`, `package world-template`, and `package mcworld` require that path to contain a real Bedrock world with a `db/` directory
 - `blr dev --world <worldName>` and `blr package --world <worldName>` can override the configured active world for a single run
 - `blr world use <worldName>` updates the configured active world and keeps the default `worlds/<worldName>` source-path convention unless the project has an explicit custom `worldSourcePath`
 - `copy.*` controls whether the current project pack types are copied into the runtime server

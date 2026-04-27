@@ -237,8 +237,11 @@ blr package [target]
 Currently supported targets:
 
 - `world-template`
+- `mctemplate`
+- `mcworld`
+- `mcaddon`
 
-`world-template` behavior:
+`world-template` and `mctemplate` behavior:
 
 - runs `build` first
 - reads the selected project world source
@@ -247,8 +250,29 @@ Currently supported targets:
 - writes `dist/packages/<packName>-<worldName>.mctemplate` when packaging a different world with `--world`
 - requires the project world source to contain a valid Bedrock world (`db/` directory)
 - if `world.backend` is `s3`, pull the world first with `blr world pull`
+
+`mcworld` behavior:
+
+- runs `build` first
+- reads the selected project world source
+- copies only the staged packs that are present into a world package workspace
+- updates the packaged world's pack reference files for included staged packs
+- writes `dist/packages/<packName>.mcworld` for the configured default world
+- writes `dist/packages/<packName>-<worldName>.mcworld` when packaging a different world with `--world`
+- requires the project world source to contain a valid Bedrock world (`db/` directory)
+- if `world.backend` is `s3`, pull the world first with `blr world pull`
+
+`mcaddon` behavior:
+
+- runs `build` first
+- copies only the staged packs that are present into an addon package workspace
+- writes `dist/packages/<packName>.mcaddon`
+- does not require a project world source
+
+Target resolution:
+
 - if `<target>` is omitted, `blr` resolves the target from `blr.config.json -> package.defaultTarget`
-- if `<target>` is omitted and no config default exists, `blr` uses the single supported target when unambiguous
+- if `<target>` is omitted and no config default exists, `blr` uses `world-template` for compatibility with generated package scripts
 
 Flags:
 
@@ -263,9 +287,12 @@ Examples:
 ```text
 blr package
 blr package world-template
+blr package mctemplate
+blr package mcworld
+blr package mcaddon
 blr package --world "Creative Sandbox"
 blr package world-template --production
-blr package world-template --debug
+blr package mcworld --debug
 ```
 
 ## `blr minecraft`

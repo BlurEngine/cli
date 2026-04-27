@@ -18,7 +18,11 @@ export type MinecraftProduct =
 export type BdsPlatform = "win" | "linux";
 
 export type PermissionLevel = "visitor" | "member" | "operator" | "custom";
-export type PackageTarget = "world-template";
+export type PackageTarget =
+    | "world-template"
+    | "mctemplate"
+    | "mcworld"
+    | "mcaddon";
 
 /**
  * Per-pack feature toggles for behavior-pack and resource-pack automation.
@@ -111,11 +115,11 @@ export interface BlurConfigWorldFile {
 }
 
 /**
- * World-template packaging defaults.
+ * Pack inclusion defaults for packaging targets that embed project packs.
  */
 export interface BlurConfigPackageWorldTemplateFile {
     /**
-     * Pack inclusion defaults for world-template packaging.
+     * Pack inclusion defaults for packaging targets that embed project packs.
      */
     include?: BlurConfigPackFeatureSelectionFile;
 }
@@ -129,7 +133,7 @@ export interface BlurConfigPackageFile {
      */
     defaultTarget?: PackageTarget;
     /**
-     * World-template packaging defaults.
+     * Pack inclusion defaults for packaging targets that embed project packs.
      */
     worldTemplate?: BlurConfigPackageWorldTemplateFile;
 }

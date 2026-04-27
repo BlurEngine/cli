@@ -9,6 +9,7 @@ import {
     runMinecraftUpdateCommand,
 } from "./commands/minecraft.js";
 import { runPackageCommand } from "./commands/package.js";
+import { formatSupportedPackageTargets } from "./package-targets.js";
 import {
     resolveSystemOutputFormat,
     runSystemDoctorCommand,
@@ -279,7 +280,7 @@ async function main(): Promise<void> {
         .description("Produce distributable project artifacts.")
         .argument(
             "[target]",
-            "Packaging target. Currently supported: world-template",
+            `Packaging target. Supported: ${formatSupportedPackageTargets()}`,
         )
         .option(
             "--production [enabled]",

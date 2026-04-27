@@ -18,6 +18,7 @@ import {
 } from "./constants.js";
 import { loadClosestDotEnvLocal } from "./env-file.js";
 import { exists, listDirectories, readJson } from "./fs.js";
+import { isPackageTarget } from "./package-targets.js";
 import { assertProjectRelativePath } from "./project-paths.js";
 import type {
     BlurConfigFile,
@@ -117,7 +118,7 @@ function ensurePermissionLevel(
 }
 
 function ensurePackageTarget(value: unknown): PackageTarget | undefined {
-    return value === "world-template" ? value : undefined;
+    return isPackageTarget(value) ? value : undefined;
 }
 
 function ensureMinecraftChannel(

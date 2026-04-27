@@ -8,6 +8,7 @@ import type { DebugLogger } from "./debug.js";
 import { resolveMachineSettings } from "./environment.js";
 import { exists, isDirectory, readJson } from "./fs.js";
 import { resolveMinecraftVersionStatus } from "./minecraft-version.js";
+import { PACKAGE_TARGETS_REQUIRING_WORLD } from "./package-targets.js";
 import { describeMinecraftDevelopmentRootResolution } from "./runtime.js";
 import { resolveProjectServerStatePath } from "./server-state.js";
 import type {
@@ -15,6 +16,7 @@ import type {
     BlurProject,
     MinecraftProduct,
     PackageManager,
+    PackageTarget,
 } from "./types.js";
 import type { FetchImplementation } from "./bedrock-downloads.js";
 import {
@@ -825,8 +827,8 @@ export async function collectSystemDoctorReport(
             summary: `The active world source "${worldStatus.worldName}" is missing or does not contain a valid Bedrock world.`,
             detail:
                 config.world.backend === "s3"
-                    ? 'Run "blr world pull" before using watch-world or world-template packaging.'
-                    : "watch-world and world-template packaging will stay unavailable until a valid world source exists.",
+                    ? 'Run "blr world pull" before using watch-world or world packaging targets.'
+                    : "watch-world and world packaging targets will stay unavailable until a valid world source exists.",
         });
     }
 
@@ -871,7 +873,10 @@ export async function collectSystemDoctorReport(
     }
 
     if (
-        config.package.defaultTarget === "world-template" &&
+        config.package.defaultTarget &&
+        (PACKAGE_TARGETS_REQUIRING_WORLD as readonly PackageTarget[]).includes(
+            config.package.defaultTarget,
+        ) &&
         !worldStatus.local.valid
     ) {
         checks.push({

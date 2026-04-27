@@ -105,6 +105,23 @@ test("loadBlurConfig defaults dev.watch.paths to runtime and pack sources only",
     ]);
 });
 
+test("loadBlurConfig accepts package.defaultTarget package formats", async (t) => {
+    for (const target of ["mctemplate", "mcworld", "mcaddon"]) {
+        const projectRoot = await createTempDirectory(t, "blr-config-");
+        await createMinimalProject(projectRoot, {
+            schemaVersion: 1,
+            projectVersion: 1,
+            namespace: "bc_df",
+            package: {
+                defaultTarget: target,
+            },
+        });
+
+        const { config } = await loadBlurConfig(projectRoot);
+        assert.equal(config.package.defaultTarget, target);
+    }
+});
+
 test("loadBlurConfig preserves the authored pack minEngineVersion", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-config-");
     await createMinimalProject(projectRoot, {

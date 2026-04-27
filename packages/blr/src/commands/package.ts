@@ -14,7 +14,17 @@ import {
     writeJson,
 } from "../fs.js";
 import { DEFAULT_PACK_VERSION } from "../constants.js";
-import { buildProject, resolveBuildArtifacts } from "../runtime.js";
+import {
+    DEFAULT_PACKAGE_TARGET,
+    formatSupportedPackageTargets,
+    isPackageTarget,
+    PACKAGE_TARGETS_REQUIRING_WORLD,
+} from "../package-targets.js";
+import {
+    buildProject,
+    resolveBuildArtifacts,
+    type ResolvedBuildArtifacts,
+} from "../runtime.js";
 import type { BlurProject, PackageTarget, VersionTuple } from "../types.js";
 import {
     appendWorldSourceHint,
@@ -31,7 +41,45 @@ type PackageCommandOptions = {
     debug?: boolean;
 };
 
-const SUPPORTED_PACKAGE_TARGETS: PackageTarget[] = ["world-template"];
+type PackageTargetDefinition = {
+    workspaceDirectoryName: string;
+    outputExtension: "mctemplate" | "mcworld" | "mcaddon";
+    archiveRoot?: string;
+    includeWorld: boolean;
+    writeWorldTemplateManifest: boolean;
+};
+
+const PACKAGE_TARGET_DEFINITIONS: Record<
+    PackageTarget,
+    PackageTargetDefinition
+> = {
+    "world-template": {
+        workspaceDirectoryName: "world_template",
+        outputExtension: "mctemplate",
+        archiveRoot: "world_template",
+        includeWorld: true,
+        writeWorldTemplateManifest: true,
+    },
+    mctemplate: {
+        workspaceDirectoryName: "world_template",
+        outputExtension: "mctemplate",
+        archiveRoot: "world_template",
+        includeWorld: true,
+        writeWorldTemplateManifest: true,
+    },
+    mcworld: {
+        workspaceDirectoryName: "mcworld",
+        outputExtension: "mcworld",
+        includeWorld: true,
+        writeWorldTemplateManifest: false,
+    },
+    mcaddon: {
+        workspaceDirectoryName: "mcaddon",
+        outputExtension: "mcaddon",
+        includeWorld: false,
+        writeWorldTemplateManifest: false,
+    },
+};
 
 type WorldTemplateManifest = {
     format_version: 2;
@@ -124,44 +172,38 @@ function createWorldTemplatePackFolderName(
     return `${base.slice(0, maxBaseLength)}${suffix}`;
 }
 
-async function packageWorldTemplate(
-    projectRoot: string,
+function createPackageOutputBaseName(
     config: BlurProject,
     worldName: string,
-    worldSourcePath: string,
+    includeWorld: boolean,
+): string {
+    if (!includeWorld || worldName === config.dev.localServer.worldName) {
+        return config.project.packName;
+    }
+
+    return `${config.project.packName}-${worldName.replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-")}`;
+}
+
+async function copySelectedProjectPacks(
+    artifacts: ResolvedBuildArtifacts,
+    workspaceRoot: string,
     includeSelection: {
         behaviorPack: boolean;
         resourcePack: boolean;
     },
 ): Promise<{
-    workspaceRoot: string;
-    outputFile: string;
+    behaviorPackIncluded: boolean;
+    resourcePackIncluded: boolean;
 }> {
-    const artifacts = resolveBuildArtifacts(projectRoot, config);
-    const worldTemplateSource = resolveProjectWorldSourceDirectory(
-        projectRoot,
-        worldSourcePath,
-    );
-
-    const workspaceRoot = path.join(artifacts.packagesRoot, "world_template");
     const behaviorPackFolderName = artifacts.behaviorPackName
         ? createWorldTemplatePackFolderName(artifacts.behaviorPackName, "bp")
         : undefined;
     const resourcePackFolderName = artifacts.resourcePackName
         ? createWorldTemplatePackFolderName(artifacts.resourcePackName, "rp")
         : undefined;
-    const outputBaseName =
-        worldName === config.dev.localServer.worldName
-            ? config.project.packName
-            : `${config.project.packName}-${worldName.replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-")}`;
-    const outputFile = path.join(
-        artifacts.packagesRoot,
-        `${outputBaseName}.mctemplate`,
-    );
+    let behaviorPackIncluded = false;
+    let resourcePackIncluded = false;
 
-    await removeDirectory(workspaceRoot);
-    await ensureDirectory(artifacts.packagesRoot);
-    await copyDirectory(worldTemplateSource, workspaceRoot);
     if (
         includeSelection.behaviorPack &&
         artifacts.stageBehaviorPackDirectory &&
@@ -171,6 +213,7 @@ async function packageWorldTemplate(
             artifacts.stageBehaviorPackDirectory,
             path.join(workspaceRoot, "behavior_packs", behaviorPackFolderName),
         );
+        behaviorPackIncluded = true;
     }
     if (
         includeSelection.resourcePack &&
@@ -181,30 +224,40 @@ async function packageWorldTemplate(
             artifacts.stageResourcePackDirectory,
             path.join(workspaceRoot, "resource_packs", resourcePackFolderName),
         );
+        resourcePackIncluded = true;
     }
-    await removeFilesNamed(workspaceRoot, ".gitkeep");
 
-    await writeJson(
-        path.join(workspaceRoot, "manifest.json"),
-        toWorldTemplateManifest(config, worldName),
-    );
-    const syncPackReferenceFile = async (
-        filePath: string,
-        packId: string,
-        nextEntry?: Record<string, unknown>,
-    ) => {
-        const existing = (await exists(filePath))
-            ? await readJson<Array<Record<string, unknown>>>(filePath)
-            : [];
-        const filtered = existing.filter((entry) => entry.pack_id !== packId);
-        const nextEntries = nextEntry ? [nextEntry, ...filtered] : filtered;
-        if (nextEntries.length === 0) {
-            await removeDirectory(filePath);
-            return;
-        }
-        await writeJson(filePath, nextEntries);
+    return {
+        behaviorPackIncluded,
+        resourcePackIncluded,
     };
+}
 
+async function syncPackReferenceFile(
+    filePath: string,
+    packId: string,
+    nextEntry?: Record<string, unknown>,
+): Promise<void> {
+    const existing = (await exists(filePath))
+        ? await readJson<Array<Record<string, unknown>>>(filePath)
+        : [];
+    const filtered = existing.filter((entry) => entry.pack_id !== packId);
+    const nextEntries = nextEntry ? [nextEntry, ...filtered] : filtered;
+    if (nextEntries.length === 0) {
+        await removeDirectory(filePath);
+        return;
+    }
+    await writeJson(filePath, nextEntries);
+}
+
+async function syncWorldPackReferences(
+    config: BlurProject,
+    workspaceRoot: string,
+    includeSelection: {
+        behaviorPack: boolean;
+        resourcePack: boolean;
+    },
+): Promise<void> {
     if (config.packs.behavior) {
         await syncPackReferenceFile(
             path.join(workspaceRoot, "world_behavior_packs.json"),
@@ -229,9 +282,93 @@ async function packageWorldTemplate(
                 : undefined,
         );
     }
+}
+
+function addWorkspaceToArchive(
+    archive: AdmZip,
+    workspaceRoot: string,
+    archiveRoot: string | undefined,
+): void {
+    if (archiveRoot) {
+        archive.addLocalFolder(workspaceRoot, archiveRoot);
+        return;
+    }
+
+    archive.addLocalFolder(workspaceRoot);
+}
+
+async function packageProjectTarget(
+    target: PackageTarget,
+    projectRoot: string,
+    config: BlurProject,
+    worldName: string,
+    worldSourcePath: string,
+    includeSelection: {
+        behaviorPack: boolean;
+        resourcePack: boolean;
+    },
+): Promise<{
+    workspaceRoot: string;
+    outputFile: string;
+}> {
+    const targetDefinition = PACKAGE_TARGET_DEFINITIONS[target];
+    const artifacts = resolveBuildArtifacts(projectRoot, config);
+    const workspaceRoot = path.join(
+        artifacts.packagesRoot,
+        targetDefinition.workspaceDirectoryName,
+    );
+    const outputBaseName = createPackageOutputBaseName(
+        config,
+        worldName,
+        targetDefinition.includeWorld,
+    );
+    const outputFile = path.join(
+        artifacts.packagesRoot,
+        `${outputBaseName}.${targetDefinition.outputExtension}`,
+    );
+
+    await removeDirectory(workspaceRoot);
+    await ensureDirectory(artifacts.packagesRoot);
+    if (targetDefinition.includeWorld) {
+        await copyDirectory(
+            resolveProjectWorldSourceDirectory(projectRoot, worldSourcePath),
+            workspaceRoot,
+        );
+    } else {
+        await ensureDirectory(workspaceRoot);
+    }
+
+    const copiedPacks = await copySelectedProjectPacks(
+        artifacts,
+        workspaceRoot,
+        includeSelection,
+    );
+
+    if (
+        target === "mcaddon" &&
+        !copiedPacks.behaviorPackIncluded &&
+        !copiedPacks.resourcePackIncluded
+    ) {
+        throw new Error(
+            "Cannot package mcaddon because no staged packs are selected for inclusion.",
+        );
+    }
+
+    await removeFilesNamed(workspaceRoot, ".gitkeep");
+
+    if (targetDefinition.writeWorldTemplateManifest) {
+        await writeJson(
+            path.join(workspaceRoot, "manifest.json"),
+            toWorldTemplateManifest(config, worldName),
+        );
+    }
+
+    if (targetDefinition.includeWorld) {
+        await syncWorldPackReferences(config, workspaceRoot, includeSelection);
+    }
 
     const archive = new AdmZip();
-    archive.addLocalFolder(workspaceRoot, "world_template");
+    addWorkspaceToArchive(archive, workspaceRoot, targetDefinition.archiveRoot);
     await removeDirectory(outputFile);
     archive.writeZip(outputFile);
 
@@ -259,19 +396,11 @@ export async function runPackageCommand(
     const target =
         requestedTarget ??
         config.package.defaultTarget ??
-        (SUPPORTED_PACKAGE_TARGETS.length === 1
-            ? SUPPORTED_PACKAGE_TARGETS[0]
-            : undefined);
+        DEFAULT_PACKAGE_TARGET;
 
-    if (!target) {
+    if (!isPackageTarget(target)) {
         throw new Error(
-            "No package target was provided and blr.config.json does not define package.defaultTarget.",
-        );
-    }
-
-    if (!SUPPORTED_PACKAGE_TARGETS.includes(target as PackageTarget)) {
-        throw new Error(
-            `Unsupported package target "${target}". Supported targets: ${SUPPORTED_PACKAGE_TARGETS.join(", ")}.`,
+            `Unsupported package target "${target}". Supported targets: ${formatSupportedPackageTargets()}.`,
         );
     }
 
@@ -285,12 +414,16 @@ export async function runPackageCommand(
         defaultTarget: config.package.defaultTarget ?? null,
     });
 
-    if (target === "world-template") {
+    if (
+        (PACKAGE_TARGETS_REQUIRING_WORLD as readonly PackageTarget[]).includes(
+            target,
+        )
+    ) {
         try {
             await assertValidProjectWorldSource(
                 projectRoot,
                 selectedWorld.worldSourcePath,
-                "package world-template",
+                `package ${target}`,
             );
         } catch (error) {
             const message =
@@ -303,7 +436,8 @@ export async function runPackageCommand(
 
     await buildProject(projectRoot, config, { production, debug });
 
-    const packaged = await packageWorldTemplate(
+    const packaged = await packageProjectTarget(
+        target,
         projectRoot,
         config,
         selectedWorld.worldName,

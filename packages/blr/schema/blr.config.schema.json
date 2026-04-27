@@ -147,7 +147,7 @@
         },
         "worldTemplate": {
           "$ref": "#/definitions/BlurConfigPackageWorldTemplateFile",
-          "description": "World-template packaging defaults."
+          "description": "Pack inclusion defaults for packaging targets that embed project packs."
         }
       },
       "additionalProperties": false,
@@ -155,18 +155,18 @@
     },
     "PackageTarget": {
       "type": "string",
-      "const": "world-template"
+      "enum": ["world-template", "mctemplate", "mcworld", "mcaddon"]
     },
     "BlurConfigPackageWorldTemplateFile": {
       "type": "object",
       "properties": {
         "include": {
           "$ref": "#/definitions/BlurConfigPackFeatureSelectionFile",
-          "description": "Pack inclusion defaults for world-template packaging."
+          "description": "Pack inclusion defaults for packaging targets that embed project packs."
         }
       },
       "additionalProperties": false,
-      "description": "World-template packaging defaults."
+      "description": "Pack inclusion defaults for packaging targets that embed project packs."
     },
     "BlurConfigPackFeatureSelectionFile": {
       "type": "object",
