@@ -170,6 +170,16 @@ export async function runUpgradeCommand(
             );
             continue;
         }
+        if (change.scope === "packageEngine") {
+            const from =
+                typeof change.change.from === "string"
+                    ? change.change.from
+                    : "(missing)";
+            console.log(
+                `[upgrade] ${options.dryRun ? "Planned" : "Applied"} package Node.js engine: ${from} -> ${change.change.to}`,
+            );
+            continue;
+        }
         console.log(
             `[upgrade] ${options.dryRun ? "Planned" : "Applied"} managed .gitignore block.`,
         );

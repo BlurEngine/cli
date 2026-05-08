@@ -10,6 +10,9 @@ import { copyFixtureProject, readJsonFile, readTextFile } from "./helpers.js";
 
 type PackageJsonShape = {
     scripts?: Record<string, string>;
+    engines?: {
+        node?: string;
+    };
 };
 
 type BlurConfigShape = {
@@ -72,6 +75,7 @@ test("upgradeProjectScaffold migrates legacy project state and reconciles manage
         path.join(projectRoot, "package.json"),
     );
     assert.deepEqual(packageJson.scripts, { ...MANAGED_PACKAGE_SCRIPTS });
+    assert.equal(packageJson.engines?.node, ">=22.12.0");
 
     const gitIgnore = await readTextFile(path.join(projectRoot, ".gitignore"));
     assert.match(gitIgnore, /# BEGIN MANAGED BY @blurengine\/cli/);

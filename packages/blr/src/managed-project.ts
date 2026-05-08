@@ -9,6 +9,8 @@ export const MANAGED_PACKAGE_SCRIPTS = {
     upgrade: "blr upgrade",
 } as const;
 
+export const MANAGED_NODE_ENGINE = ">=22.12.0";
+
 const GITIGNORE_MANAGED_BEGIN = "# BEGIN MANAGED BY @blurengine/cli";
 const GITIGNORE_MANAGED_END = "# END MANAGED BY @blurengine/cli";
 const MANAGED_GITIGNORE_LINES = [
@@ -25,10 +27,16 @@ const MANAGED_GITIGNORE_LINES = [
 
 type PackageJsonLike = {
     scripts?: Record<string, string>;
+    engines?: Record<string, string>;
 };
 
 export type ManagedPackageScriptChange = {
     name: string;
+    from: string | undefined;
+    to: string;
+};
+
+export type ManagedNodeEngineChange = {
     from: string | undefined;
     to: string;
 };
@@ -49,6 +57,21 @@ export function applyManagedPackageScripts(
 
     pkg.scripts = scripts;
     return changes;
+}
+
+export function applyManagedNodeEngine(
+    pkg: PackageJsonLike,
+): ManagedNodeEngineChange | undefined {
+    const engines: Record<string, string> = { ...(pkg.engines ?? {}) };
+    const current = engines.node;
+
+    if (current === MANAGED_NODE_ENGINE) {
+        return undefined;
+    }
+
+    engines.node = MANAGED_NODE_ENGINE;
+    pkg.engines = engines;
+    return { from: current, to: MANAGED_NODE_ENGINE };
 }
 
 function normalizeLineEndings(content: string): string {

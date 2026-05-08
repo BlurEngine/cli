@@ -20,6 +20,9 @@ import {
 type PackageJsonShape = {
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
+    engines?: {
+        node?: string;
+    };
 };
 
 type BlurConfigShape = {
@@ -74,6 +77,7 @@ test("built cli create scaffolds a scripting project with bebe enabled by defaul
         BASELINE_BEBE_DEPENDENCIES["@blurengine/bebe"],
     );
     assert.ok(packageJson.devDependencies?.["@blurengine/cli"]);
+    assert.equal(packageJson.engines?.node, ">=22.12.0");
     assert.match(mainFile, /import \{ Context \} from "@blurengine\/bebe";/);
     assert.match(mainFile, /const ctx = new Context\(\);/);
     assert.equal(
@@ -170,6 +174,9 @@ test("built cli create keeps a resource-only scaffold minimal", async (t) => {
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
     const projectRoot = path.join(workspace, "resource-only");
+    const packageJson = await readJsonFile<PackageJsonShape>(
+        path.join(projectRoot, "package.json"),
+    );
     const readme = await readTextFile(path.join(projectRoot, "README.md"));
     const gitIgnore = await readTextFile(path.join(projectRoot, ".gitignore"));
     const resourcePackDirectories = await listDirectories(
@@ -198,6 +205,7 @@ test("built cli create keeps a resource-only scaffold minimal", async (t) => {
     assert.match(readme, /^# resource-only/m);
     assert.match(readme, /pnpm run build/);
     assert.match(readme, /pnpm run system/);
+    assert.equal(packageJson.engines?.node, ">=22.12.0");
     assert.match(gitIgnore, /^worlds\/\*\*$/m);
     assert.match(gitIgnore, /^!worlds\/$/m);
     assert.match(gitIgnore, /^!worlds\/worlds\.json$/m);

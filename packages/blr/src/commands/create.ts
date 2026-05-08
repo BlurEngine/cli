@@ -32,6 +32,7 @@ import {
 import { syncManagedProjectInstructions } from "../project-instructions.js";
 import {
     MANAGED_PACKAGE_SCRIPTS,
+    MANAGED_NODE_ENGINE,
     reconcileManagedGitIgnore,
 } from "../managed-project.js";
 import { runPrompt } from "../prompt.js";
@@ -263,7 +264,7 @@ function createPackageJson(
         dependencies,
         devDependencies,
         engines: {
-            node: ">=22.0.0",
+            node: MANAGED_NODE_ENGINE,
         },
     };
 }

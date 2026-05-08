@@ -5,8 +5,10 @@ import {
     CURRENT_PROJECT_VERSION,
 } from "./constants.js";
 import {
+    applyManagedNodeEngine,
     applyManagedPackageScripts,
     reconcileManagedGitIgnore as reconcileManagedGitIgnoreContent,
+    type ManagedNodeEngineChange,
     type ManagedPackageScriptChange,
 } from "./managed-project.js";
 import {
@@ -22,12 +24,17 @@ import type { BlurConfigFile } from "./types.js";
 
 type PackageJsonShape = {
     scripts?: Record<string, string>;
+    engines?: Record<string, string>;
 };
 
 type ManagedFileChange =
     | {
           scope: "packageScripts";
           changes: ManagedPackageScriptChange[];
+      }
+    | {
+          scope: "packageEngine";
+          change: ManagedNodeEngineChange;
       }
     | {
           scope: "gitignore";
@@ -168,19 +175,32 @@ async function reconcileManagedConfigMetadata(
 async function reconcileManagedPackageJson(
     packageJsonPath: string,
     dryRun: boolean,
-): Promise<ManagedFileChange | undefined> {
+): Promise<ManagedFileChange[]> {
     const packageJson = await readJson<PackageJsonShape>(packageJsonPath);
-    const changes = applyManagedPackageScripts(packageJson);
+    const scriptChanges = applyManagedPackageScripts(packageJson);
+    const engineChange = applyManagedNodeEngine(packageJson);
+    const changes: ManagedFileChange[] = [];
+
+    if (scriptChanges.length > 0) {
+        changes.push({
+            scope: "packageScripts",
+            changes: scriptChanges,
+        });
+    }
+    if (engineChange) {
+        changes.push({
+            scope: "packageEngine",
+            change: engineChange,
+        });
+    }
+
     if (changes.length === 0) {
-        return undefined;
+        return [];
     }
     if (!dryRun) {
         await writeJson(packageJsonPath, packageJson);
     }
-    return {
-        scope: "packageScripts",
-        changes,
-    };
+    return changes;
 }
 
 async function reconcileManagedGitIgnoreFile(
@@ -232,13 +252,11 @@ export async function upgradeProjectScaffold(
     if (configMetadataChange) {
         managedFileChanges.push(configMetadataChange);
     }
-    const packageJsonChange = await reconcileManagedPackageJson(
+    const packageJsonChanges = await reconcileManagedPackageJson(
         packageJsonPath,
         dryRun,
     );
-    if (packageJsonChange) {
-        managedFileChanges.push(packageJsonChange);
-    }
+    managedFileChanges.push(...packageJsonChanges);
     const gitIgnoreChange = await reconcileManagedGitIgnoreFile(
         projectRoot,
         dryRun,
