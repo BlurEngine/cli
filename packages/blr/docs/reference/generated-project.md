@@ -155,7 +155,7 @@ Project-owned raw Bedrock world source.
 Usage:
 
 - used as the project-owned source world for BDS bootstrap/reset
-- generated projects ignore `worlds/` by default so local world materialization does not get committed accidentally
+- generated projects ignore raw world directories by default while allowing the project pin at `worlds/worlds.json` to be committed
 - this nudges teams toward `blr world pull`, `blr world capture`, and `blr world push` instead of treating raw world state as normal source-controlled content
 - projects that intentionally keep world sources in git can remove or narrow that ignore rule
 - if `watch-world` and `restartOnWorldChange` are enabled, changes here trigger a BDS restart/reset
@@ -222,7 +222,9 @@ Generated defaults:
   - `node_modules/`
   - `dist/`
   - `.blr/`
-  - `worlds/`
+  - `worlds/**`
+  - `!worlds/`
+  - `!worlds/worlds.json`
   - `.env.local`
   - `.DS_Store`
 
