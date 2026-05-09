@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { access } from "node:fs/promises";
-import { mkdir } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { loadBlurConfig } from "../src/config.js";
@@ -8,11 +7,13 @@ import { BLR_ENV_BDS_VERSION } from "../src/constants.js";
 import {
     buildRemoteWorldSyncFailureMessage,
     mergePipelineModes,
+    resolveRuntimeWorldDecision,
     resolveProjectWatchChangeAction,
     runDevCommand,
     resolveDevLocalServerVersionSource,
     shouldUseInteractiveDevConfiguration,
 } from "../src/commands/dev.js";
+import { writeRuntimeWorldSeedState } from "../src/world-internal-state.js";
 import {
     createJsonResponse,
     createTempDirectory,
@@ -215,6 +216,77 @@ test("loadBlurConfig respects configured local-server worldSync modes", async (t
     const { config } = await loadBlurConfig(projectRoot);
     assert.equal(config.dev.localServer.worldSync.projectWorldMode, "auto");
     assert.equal(config.dev.localServer.worldSync.runtimeWorldMode, "backup");
+});
+
+test("resolveRuntimeWorldDecision labels stale runtime worlds when preserve mode keeps them", async (t) => {
+    const worldName = "Bedrock level";
+    const projectRoot = await createTempDirectory(t, "blr-dev-runtime-stale-");
+    await createConfigLoadProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        dev: {
+            localServer: {
+                worldName,
+                worldSync: {
+                    runtimeWorldMode: "preserve",
+                },
+            },
+        },
+    });
+
+    const worldSourceDirectory = path.join(projectRoot, "worlds", worldName);
+    const runtimeWorldDirectory = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        "server",
+        "worlds",
+        worldName,
+    );
+    await mkdir(path.join(worldSourceDirectory, "db"), { recursive: true });
+    await mkdir(runtimeWorldDirectory, { recursive: true });
+    await writeFile(path.join(worldSourceDirectory, "db", "CURRENT"), "new");
+    await writeRuntimeWorldSeedState(projectRoot, {
+        worldName,
+        sourceIdentity: "sha256:previous-project-world",
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    const decision = await resolveRuntimeWorldDecision({
+        projectRoot,
+        config,
+        runtimeState: {
+            channel: "stable",
+            version: "1.26.0.2",
+            platform: "linux",
+            cacheDirectory: path.join(projectRoot, ".blr", "bds", "cache"),
+            serverDirectory: path.join(projectRoot, ".blr", "bds", "server"),
+            worldName,
+            worldSourcePath: `worlds/${worldName}`,
+            worldDirectory: runtimeWorldDirectory,
+            worldSourceDirectory,
+            executablePath: path.join(
+                projectRoot,
+                ".blr",
+                "bds",
+                "server",
+                "bedrock_server",
+            ),
+            zipPath: path.join(projectRoot, ".blr", "bds", "cache", "bds.zip"),
+            customExecutableInjected: false,
+        },
+    });
+
+    assert.equal(decision.action, "preserve");
+    assert.match(
+        decision.note ?? "",
+        /Project world source is newer or different than the local-server world last seeded for "Bedrock level"/,
+    );
+    assert.match(
+        decision.note ?? "",
+        /dev\.localServer\.worldSync\.runtimeWorldMode=preserve/,
+    );
 });
 
 test("buildRemoteWorldSyncFailureMessage replaces raw unknown backend errors with a helpful dev warning", () => {

@@ -760,15 +760,26 @@ type RuntimeWorldDecision =
           note?: string;
       };
 
-async function promptForRuntimeWorldAction(): Promise<
-    "replace" | "keep" | "backup"
-> {
+function buildRuntimeWorldOutOfSyncMessage(
+    worldName: string,
+    outcome: string,
+): string {
+    return `[dev] Project world source is newer or different than the local-server world last seeded for "${worldName}"; ${outcome}.`;
+}
+
+async function promptForRuntimeWorldAction(
+    worldName: string,
+): Promise<"replace" | "keep" | "backup"> {
     const result = await runPrompt({
         type: "select",
         name: "runtimeWorldChoice",
-        message: ["Replace local-server world?", "Choose an action:"].join(
-            "\n",
-        ),
+        message: [
+            buildRuntimeWorldOutOfSyncMessage(
+                worldName,
+                "choose how to reconcile it",
+            ),
+            "Replace local-server world?",
+        ].join("\n"),
         choices: [
             {
                 title: "Replace local-server world",
@@ -790,7 +801,7 @@ async function promptForRuntimeWorldAction(): Promise<
     return result.runtimeWorldChoice as "replace" | "keep" | "backup";
 }
 
-async function resolveRuntimeWorldDecision(options: {
+export async function resolveRuntimeWorldDecision(options: {
     projectRoot: string;
     config: BlurProject;
     runtimeState: ReturnType<typeof resolveBdsRuntimeState>;
@@ -839,7 +850,10 @@ async function resolveRuntimeWorldDecision(options: {
             return {
                 action: "preserve",
                 sourceIdentity,
-                note: `[dev] Kept existing local-server world for "${options.runtimeState.worldName}".`,
+                note: buildRuntimeWorldOutOfSyncMessage(
+                    options.runtimeState.worldName,
+                    "keeping existing local-server world (dev.localServer.worldSync.runtimeWorldMode=preserve)",
+                ),
             };
         case "replace":
             return {
@@ -857,11 +871,18 @@ async function resolveRuntimeWorldDecision(options: {
                 return {
                     action: "preserve",
                     sourceIdentity,
-                    note: `[dev] Project world changed, but local-server world was kept because this run is non-interactive.`,
+                    note: buildRuntimeWorldOutOfSyncMessage(
+                        options.runtimeState.worldName,
+                        "keeping existing local-server world because this run is non-interactive",
+                    ),
                 };
             }
 
-            switch (await promptForRuntimeWorldAction()) {
+            switch (
+                await promptForRuntimeWorldAction(
+                    options.runtimeState.worldName,
+                )
+            ) {
                 case "replace":
                     return {
                         action: "replace",
@@ -877,7 +898,10 @@ async function resolveRuntimeWorldDecision(options: {
                     return {
                         action: "preserve",
                         sourceIdentity,
-                        note: `[dev] Kept existing local-server world for "${options.runtimeState.worldName}".`,
+                        note: buildRuntimeWorldOutOfSyncMessage(
+                            options.runtimeState.worldName,
+                            "keeping existing local-server world",
+                        ),
                     };
             }
     }

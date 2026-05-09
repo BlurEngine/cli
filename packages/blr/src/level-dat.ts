@@ -1,4 +1,5 @@
 import { copyFile, readFile, writeFile } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import * as prismarineNbt from "prismarine-nbt";
 import { ensureParentDirectory, exists } from "./fs.js";
 
@@ -36,6 +37,36 @@ export type BedrockLevelDatDump =
     | BedrockLevelDatTypedDump
     | BedrockLevelDatSimplifiedDump;
 
+export type BedrockLevelDatDiffValue = {
+    type: string;
+    value: unknown;
+};
+
+export type BedrockLevelDatDiffEntry = {
+    kind: "added" | "removed" | "changed";
+    path: string;
+    left?: BedrockLevelDatDiffValue;
+    right?: BedrockLevelDatDiffValue;
+};
+
+export type BedrockLevelDatDiff = {
+    fileType: "bedrock-level-dat-diff";
+    nbtFormat: prismarineNbt.NBTFormat;
+    identical: boolean;
+    left: {
+        storageVersion: number;
+        payloadLength: number;
+        rootName: string;
+    };
+    right: {
+        storageVersion: number;
+        payloadLength: number;
+        rootName: string;
+    };
+    metadata: BedrockLevelDatDiffEntry[];
+    data: BedrockLevelDatDiffEntry[];
+};
+
 export type WriteBedrockLevelDatFileOptions = {
     backup?: boolean;
     backupPath?: string;
@@ -44,6 +75,12 @@ export type WriteBedrockLevelDatFileOptions = {
 export type WriteBedrockLevelDatFileResult = {
     backupPath?: string;
     byteLength: number;
+};
+
+type ComparableNbtTag = {
+    name?: string;
+    type: string;
+    value: unknown;
 };
 
 function assertValidStorageVersion(value: number): number {
@@ -156,6 +193,266 @@ export function createBedrockLevelDatDump(
         rootName: levelDat.data.name,
         data: prismarineNbt.simplify(levelDat.data),
     };
+}
+
+function trySimplifyNbtTag(tag: ComparableNbtTag): unknown {
+    try {
+        return prismarineNbt.simplify(tag as prismarineNbt.NBT);
+    } catch {
+        return tag.value;
+    }
+}
+
+function summarizeNbtTag(tag: ComparableNbtTag): BedrockLevelDatDiffValue {
+    return {
+        type: tag.type,
+        value: trySimplifyNbtTag(tag),
+    };
+}
+
+function isCompoundTag(
+    tag: ComparableNbtTag | undefined,
+): tag is ComparableNbtTag & { value: Record<string, ComparableNbtTag> } {
+    return (
+        tag?.type === "compound" &&
+        Boolean(tag.value) &&
+        typeof tag.value === "object" &&
+        !Array.isArray(tag.value)
+    );
+}
+
+function collectNbtDiffEntries(
+    left: ComparableNbtTag | undefined,
+    right: ComparableNbtTag | undefined,
+    currentPath: string,
+): BedrockLevelDatDiffEntry[] {
+    if (!left && !right) {
+        return [];
+    }
+
+    if (!left && right) {
+        return [
+            {
+                kind: "added",
+                path: currentPath,
+                right: summarizeNbtTag(right),
+            },
+        ];
+    }
+
+    if (left && !right) {
+        return [
+            {
+                kind: "removed",
+                path: currentPath,
+                left: summarizeNbtTag(left),
+            },
+        ];
+    }
+
+    if (!left || !right) {
+        return [];
+    }
+
+    if (left.type !== right.type) {
+        return [
+            {
+                kind: "changed",
+                path: currentPath,
+                left: summarizeNbtTag(left),
+                right: summarizeNbtTag(right),
+            },
+        ];
+    }
+
+    if (isCompoundTag(left) && isCompoundTag(right)) {
+        const entries: BedrockLevelDatDiffEntry[] = [];
+        const fieldNames = Array.from(
+            new Set([...Object.keys(left.value), ...Object.keys(right.value)]),
+        ).sort((leftField, rightField) => leftField.localeCompare(rightField));
+
+        for (const fieldName of fieldNames) {
+            entries.push(
+                ...collectNbtDiffEntries(
+                    left.value[fieldName],
+                    right.value[fieldName],
+                    currentPath ? `${currentPath}.${fieldName}` : fieldName,
+                ),
+            );
+        }
+
+        return entries;
+    }
+
+    if (isDeepStrictEqual(left.value, right.value)) {
+        return [];
+    }
+
+    return [
+        {
+            kind: "changed",
+            path: currentPath,
+            left: summarizeNbtTag(left),
+            right: summarizeNbtTag(right),
+        },
+    ];
+}
+
+function createMetadataDiffEntries(
+    left: BedrockLevelDat,
+    right: BedrockLevelDat,
+): BedrockLevelDatDiffEntry[] {
+    const entries: BedrockLevelDatDiffEntry[] = [];
+
+    if (left.storageVersion !== right.storageVersion) {
+        entries.push({
+            kind: "changed",
+            path: "$storageVersion",
+            left: {
+                type: "uint32",
+                value: left.storageVersion,
+            },
+            right: {
+                type: "uint32",
+                value: right.storageVersion,
+            },
+        });
+    }
+
+    if (left.payloadLength !== right.payloadLength) {
+        entries.push({
+            kind: "changed",
+            path: "$payloadLength",
+            left: {
+                type: "uint32",
+                value: left.payloadLength,
+            },
+            right: {
+                type: "uint32",
+                value: right.payloadLength,
+            },
+        });
+    }
+
+    if (left.data.name !== right.data.name) {
+        entries.push({
+            kind: "changed",
+            path: "$rootName",
+            left: {
+                type: "string",
+                value: left.data.name,
+            },
+            right: {
+                type: "string",
+                value: right.data.name,
+            },
+        });
+    }
+
+    return entries;
+}
+
+export function createBedrockLevelDatDiff(
+    left: BedrockLevelDat,
+    right: BedrockLevelDat,
+): BedrockLevelDatDiff {
+    const metadata = createMetadataDiffEntries(left, right);
+    const data = collectNbtDiffEntries(left.data, right.data, "");
+
+    return {
+        fileType: "bedrock-level-dat-diff",
+        nbtFormat: BEDROCK_LEVEL_DAT_NBT_FORMAT,
+        identical: metadata.length === 0 && data.length === 0,
+        left: {
+            storageVersion: left.storageVersion,
+            payloadLength: left.payloadLength,
+            rootName: left.data.name,
+        },
+        right: {
+            storageVersion: right.storageVersion,
+            payloadLength: right.payloadLength,
+            rootName: right.data.name,
+        },
+        metadata,
+        data,
+    };
+}
+
+function formatDiffValue(value: BedrockLevelDatDiffValue | undefined): string {
+    if (!value) {
+        return "(unknown)";
+    }
+
+    const rendered =
+        typeof value.value === "string"
+            ? JSON.stringify(value.value)
+            : (JSON.stringify(value.value) ?? String(value.value));
+    return `(${value.type}) ${rendered}`;
+}
+
+function renderDiffSection(
+    heading: string,
+    entries: BedrockLevelDatDiffEntry[],
+): string[] {
+    if (entries.length === 0) {
+        return [];
+    }
+
+    const lines = [heading];
+    for (const entry of entries) {
+        if (entry.kind === "added") {
+            lines.push(`+ ${entry.path} ${formatDiffValue(entry.right)}`);
+            continue;
+        }
+
+        if (entry.kind === "removed") {
+            lines.push(`- ${entry.path} ${formatDiffValue(entry.left)}`);
+            continue;
+        }
+
+        lines.push(`~ ${entry.path}`);
+        lines.push(`  - ${formatDiffValue(entry.left)}`);
+        lines.push(`  + ${formatDiffValue(entry.right)}`);
+    }
+
+    return lines;
+}
+
+export function renderBedrockLevelDatDiff(
+    diff: BedrockLevelDatDiff,
+    labels?: {
+        left: string;
+        right: string;
+    },
+): string {
+    const lines: string[] = [];
+
+    if (labels) {
+        lines.push(`--- ${labels.left}`);
+        lines.push(`+++ ${labels.right}`);
+    }
+
+    if (diff.identical) {
+        lines.push("No level.dat differences found.");
+        return lines.join("\n");
+    }
+
+    const metadataLines = renderDiffSection("@@ metadata @@", diff.metadata);
+    const dataLines = renderDiffSection("@@ data @@", diff.data);
+
+    if (metadataLines.length > 0) {
+        lines.push(...metadataLines);
+    }
+
+    if (metadataLines.length > 0 && dataLines.length > 0) {
+        lines.push("");
+    }
+
+    if (dataLines.length > 0) {
+        lines.push(...dataLines);
+    }
+
+    return lines.join("\n");
 }
 
 export async function writeBedrockLevelDatFile(

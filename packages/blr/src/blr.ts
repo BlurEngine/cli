@@ -18,6 +18,7 @@ import {
 import { runUpgradeCommand } from "./commands/upgrade.js";
 import {
     runWorldCaptureCommand,
+    runWorldLevelDatDiffCommand,
     runWorldLevelDatEditCommand,
     runWorldLevelDatDumpCommand,
     runWorldListCommand,
@@ -64,6 +65,17 @@ function parseLevelDatDumpFormat(value: string): "simplified" | "typed" {
 
     throw new InvalidOptionArgumentError(
         `Expected level.dat dump format to be "simplified" or "typed", received "${value}".`,
+    );
+}
+
+function parseLevelDatDiffFormat(value: string): "text" | "json" {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "text" || normalized === "json") {
+        return normalized;
+    }
+
+    throw new InvalidOptionArgumentError(
+        `Expected level.dat diff format to be "text" or "json", received "${value}".`,
     );
 }
 
@@ -414,7 +426,9 @@ async function main(): Promise<void> {
         .description("Manage project world sources and remote backends.");
     const worldLevelDat = world
         .command("level-dat")
-        .description("Inspect the Bedrock level.dat file for a project world.");
+        .description(
+            "Inspect, edit, and compare Bedrock level.dat data for a project world or explicit file path.",
+        );
 
     world
         .command("use")
@@ -566,6 +580,47 @@ async function main(): Promise<void> {
                 opts: Record<string, unknown>,
             ) => {
                 await runWorldLevelDatDumpCommand(worldName, opts as any);
+            },
+        );
+
+    worldLevelDat
+        .command("diff")
+        .description(
+            "Compare two Bedrock level.dat inputs for debugging convenience.",
+        )
+        .argument(
+            "[leftTarget]",
+            "World name or path to a world directory/.dat file for the left side. Defaults to dev.localServer.worldName",
+        )
+        .argument(
+            "[rightTarget]",
+            "World name or path to a world directory/.dat file for the right side",
+        )
+        .option(
+            "--against <path>",
+            "Optional alternate way to provide the right-side world name or path",
+        )
+        .option(
+            "--path <path>",
+            "Read the left-side level.dat from a world directory or explicit .dat path",
+        )
+        .option("--format <format>", "text | json", parseLevelDatDiffFormat)
+        .option(
+            "--debug [enabled]",
+            "Enable or disable debug logs for world level.dat activity",
+            parseOptionalBoolean,
+        )
+        .action(
+            async (
+                leftTarget: string | undefined,
+                rightTarget: string | undefined,
+                opts: Record<string, unknown>,
+            ) => {
+                await runWorldLevelDatDiffCommand(
+                    leftTarget,
+                    rightTarget,
+                    opts as any,
+                );
             },
         );
 

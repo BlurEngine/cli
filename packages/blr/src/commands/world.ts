@@ -15,8 +15,10 @@ import {
     writeText,
 } from "../fs.js";
 import {
+    createBedrockLevelDatDiff,
     createBedrockLevelDatDump,
     readBedrockLevelDatFile,
+    renderBedrockLevelDatDiff,
     type BedrockLevelDatDumpFormat,
     writeBedrockLevelDatFile,
 } from "../level-dat.js";
@@ -101,6 +103,11 @@ type WorldLevelDatDumpCommandOptions = WorldCommandOptions & {
     output?: string;
     path?: string;
 };
+type WorldLevelDatDiffCommandOptions = WorldCommandOptions & {
+    against?: string;
+    format?: "text" | "json";
+    path?: string;
+};
 type WorldLevelDatEditCommandOptions = WorldCommandOptions & {
     backup?: boolean;
     path?: string;
@@ -116,6 +123,11 @@ type WorldVersionSelectionCandidate = {
 type WorldLevelDatEditCommandRuntime = {
     canPrompt?: () => boolean;
     prompt?: InteractivePrompt;
+};
+
+type WorldLevelDatCommandContext = {
+    projectRoot: string;
+    config?: BlurProject;
 };
 
 function formatRemoteWorldVersion(version: RemoteWorldVersionEntry): string {
@@ -225,6 +237,10 @@ function formatExplicitLevelDatSourceDescription(input: {
     ).replace(/\\/g, "/");
 }
 
+function looksLikeExplicitLevelDatFilePath(value: string): boolean {
+    return path.extname(trimSurroundingQuotes(value)).toLowerCase() === ".dat";
+}
+
 function looksLikeWorldPath(value: string): boolean {
     const normalized = trimSurroundingQuotes(value);
     if (normalized.length === 0) {
@@ -247,8 +263,27 @@ type ResolvedWorldLevelDatTarget = {
     usesConfiguredWorldSource: boolean;
 };
 
+function deriveWorldNameFromExplicitLevelDatPath(
+    resolvedLevelDatPath: string,
+    fallbackWorldName: string,
+): string {
+    const baseName = path.basename(resolvedLevelDatPath);
+    if (baseName.toLowerCase() === "level.dat") {
+        return (
+            path.basename(path.normalize(path.dirname(resolvedLevelDatPath))) ||
+            fallbackWorldName
+        );
+    }
+
+    return (
+        path.basename(
+            resolvedLevelDatPath,
+            path.extname(resolvedLevelDatPath),
+        ) || fallbackWorldName
+    );
+}
+
 function resolveWorldLevelDatTargetFromPath(
-    projectRoot: string,
     invocationCwd: string,
     requestedPath: string,
     fallbackWorldName: string,
@@ -256,15 +291,16 @@ function resolveWorldLevelDatTargetFromPath(
     const normalizedInput = trimSurroundingQuotes(requestedPath);
     const resolvedInput = path.resolve(invocationCwd, normalizedInput);
     const isExplicitLevelDatFile =
-        path.basename(resolvedInput).toLowerCase() === "level.dat";
+        looksLikeExplicitLevelDatFilePath(resolvedInput);
     const levelDatPath = isExplicitLevelDatFile
         ? resolvedInput
         : path.join(resolvedInput, "level.dat");
-    const worldDirectory = isExplicitLevelDatFile
-        ? path.dirname(resolvedInput)
-        : resolvedInput;
-    const derivedWorldName =
-        path.basename(path.normalize(worldDirectory)) || fallbackWorldName;
+    const derivedWorldName = isExplicitLevelDatFile
+        ? deriveWorldNameFromExplicitLevelDatPath(
+              levelDatPath,
+              fallbackWorldName,
+          )
+        : path.basename(path.normalize(resolvedInput)) || fallbackWorldName;
 
     return {
         worldName: derivedWorldName,
@@ -280,11 +316,11 @@ function resolveWorldLevelDatTargetFromPath(
 
 function resolveWorldLevelDatTarget(
     projectRoot: string,
-    config: BlurProject,
+    config: BlurProject | undefined,
     requestedWorldName: string | undefined,
     requestedPath: string | undefined,
 ): ResolvedWorldLevelDatTarget {
-    const fallbackWorldName = config.dev.localServer.worldName;
+    const fallbackWorldName = config?.dev.localServer.worldName ?? "level.dat";
     const invocationCwd = resolveCommandInvocationCwd(projectRoot);
     const normalizedRequestedPath =
         typeof requestedPath === "string" &&
@@ -294,7 +330,6 @@ function resolveWorldLevelDatTarget(
 
     if (normalizedRequestedPath) {
         return resolveWorldLevelDatTargetFromPath(
-            projectRoot,
             invocationCwd,
             normalizedRequestedPath,
             fallbackWorldName,
@@ -306,10 +341,15 @@ function resolveWorldLevelDatTarget(
         looksLikeWorldPath(requestedWorldName)
     ) {
         return resolveWorldLevelDatTargetFromPath(
-            projectRoot,
             invocationCwd,
             requestedWorldName,
             fallbackWorldName,
+        );
+    }
+
+    if (!config) {
+        throw new Error(
+            "Cannot resolve level.dat without a BlurEngine project unless you provide a world directory or .dat file path.",
         );
     }
 
@@ -336,6 +376,47 @@ function canPromptForWorldCommand(): boolean {
     return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
+function canResolveLevelDatWithoutProject(
+    requestedWorldName: string | undefined,
+    requestedPath: string | undefined,
+): boolean {
+    if (
+        typeof requestedPath === "string" &&
+        trimSurroundingQuotes(requestedPath).length > 0
+    ) {
+        return true;
+    }
+
+    return (
+        typeof requestedWorldName === "string" &&
+        looksLikeWorldPath(requestedWorldName)
+    );
+}
+
+async function loadWorldLevelDatCommandContext(
+    requestedWorldName: string | undefined,
+    requestedPath: string | undefined,
+): Promise<WorldLevelDatCommandContext> {
+    try {
+        const { projectRoot, config } = await loadBlurConfig(process.cwd());
+        return {
+            projectRoot,
+            config,
+        };
+    } catch (error) {
+        if (
+            !canResolveLevelDatWithoutProject(requestedWorldName, requestedPath)
+        ) {
+            throw error;
+        }
+
+        return {
+            projectRoot: process.cwd(),
+            config: undefined,
+        };
+    }
+}
+
 async function assertWorldPullIsSafe(
     projectRoot: string,
     worldName: string,
@@ -352,15 +433,33 @@ async function assertWorldPullIsSafe(
 
 async function assertWorldLevelDatEditIsSafe(
     projectRoot: string,
-    worldName: string,
+    config: BlurProject | undefined,
+    target: ResolvedWorldLevelDatTarget,
 ): Promise<void> {
+    if (!config) {
+        return;
+    }
+
     const session = await readActiveLocalServerSession(projectRoot);
-    if (!session?.watchWorld || session.worldName !== worldName) {
+    if (!session?.watchWorld) {
+        return;
+    }
+
+    const watchedWorld = resolveSelectedWorld(config, session.worldName);
+    const watchedLevelDatPath = path.resolve(
+        resolveProjectWorldSourceDirectory(
+            projectRoot,
+            watchedWorld.worldSourcePath,
+        ),
+        "level.dat",
+    );
+
+    if (path.resolve(target.levelDatPath) !== watchedLevelDatPath) {
         return;
     }
 
     throw new Error(
-        `Cannot edit "${worldName}" level.dat while local-server watch-world is active. Stop "blr dev" first.`,
+        `Cannot edit "${session.worldName}" level.dat while local-server watch-world is active. Stop "blr dev" first.`,
     );
 }
 
@@ -566,7 +665,10 @@ export async function runWorldLevelDatDumpCommand(
     requestedWorldName: string | undefined,
     options: WorldLevelDatDumpCommandOptions,
 ): Promise<void> {
-    const { projectRoot, config } = await loadBlurConfig(process.cwd());
+    const { projectRoot, config } = await loadWorldLevelDatCommandContext(
+        requestedWorldName,
+        options.path,
+    );
     const debug = createDebugLogger(resolveDebugEnabled(options.debug));
     const target = resolveWorldLevelDatTarget(
         projectRoot,
@@ -578,19 +680,18 @@ export async function runWorldLevelDatDumpCommand(
     if (!(await exists(target.levelDatPath))) {
         const message = `Cannot dump level.dat because ${target.sourceDescription} does not exist.`;
         throw new Error(
-            target.usesConfiguredWorldSource
+            target.usesConfiguredWorldSource && config
                 ? appendWorldSourceHint(config, target.worldName, message)
                 : message,
         );
     }
 
     if (!(await isDirectory(path.dirname(target.levelDatPath)))) {
+        const message = `Cannot dump level.dat because ${target.sourceDescription} does not exist.`;
         throw new Error(
-            appendWorldSourceHint(
-                config,
-                target.worldName,
-                `Cannot dump level.dat because ${target.sourceDescription} does not exist.`,
-            ),
+            target.usesConfiguredWorldSource && config
+                ? appendWorldSourceHint(config, target.worldName, message)
+                : message,
         );
     }
 
@@ -621,12 +722,107 @@ export async function runWorldLevelDatDumpCommand(
     console.log(JSON.stringify(dump, null, 2));
 }
 
+export async function runWorldLevelDatDiffCommand(
+    requestedLeftTarget: string | undefined,
+    requestedRightTarget: string | undefined,
+    options: WorldLevelDatDiffCommandOptions,
+): Promise<void> {
+    const { projectRoot, config } = await loadWorldLevelDatCommandContext(
+        requestedLeftTarget,
+        options.path,
+    );
+    const debug = createDebugLogger(resolveDebugEnabled(options.debug));
+    const target = resolveWorldLevelDatTarget(
+        projectRoot,
+        config,
+        requestedLeftTarget,
+        options.path,
+    );
+    const againstPath = options.against?.trim() || requestedRightTarget?.trim();
+    if (options.against?.trim() && requestedRightTarget?.trim()) {
+        throw new Error(
+            "Cannot diff level.dat with both a second positional target and --against. Provide only one right-side target.",
+        );
+    }
+
+    if (!againstPath) {
+        throw new Error(
+            'Cannot diff level.dat without a second target. Provide a second positional target or --against "<target>".',
+        );
+    }
+
+    const comparisonTarget = resolveWorldLevelDatTarget(
+        projectRoot,
+        config,
+        againstPath,
+        undefined,
+    );
+
+    if (!(await exists(target.levelDatPath))) {
+        const message = `Cannot diff level.dat because ${target.sourceDescription} does not exist.`;
+        throw new Error(
+            target.usesConfiguredWorldSource && config
+                ? appendWorldSourceHint(config, target.worldName, message)
+                : message,
+        );
+    }
+
+    if (!(await exists(comparisonTarget.levelDatPath))) {
+        throw new Error(
+            `Cannot diff level.dat because ${comparisonTarget.sourceDescription} does not exist.`,
+        );
+    }
+
+    debug.log("world", "diffing level.dat", {
+        worldName: target.worldName,
+        leftLevelDatPath: target.levelDatPath,
+        rightLevelDatPath: comparisonTarget.levelDatPath,
+        format: options.format ?? "text",
+        requestedPath:
+            typeof options.path === "string"
+                ? trimSurroundingQuotes(options.path)
+                : undefined,
+        againstTarget: trimSurroundingQuotes(againstPath),
+    });
+
+    const [leftLevelDat, rightLevelDat] = await Promise.all([
+        readBedrockLevelDatFile(target.levelDatPath),
+        readBedrockLevelDatFile(comparisonTarget.levelDatPath),
+    ]);
+    const diff = createBedrockLevelDatDiff(leftLevelDat, rightLevelDat);
+
+    if ((options.format ?? "text") === "json") {
+        console.log(
+            JSON.stringify(
+                {
+                    leftSource: target.sourceDescription,
+                    rightSource: comparisonTarget.sourceDescription,
+                    diff,
+                },
+                null,
+                2,
+            ),
+        );
+        return;
+    }
+
+    console.log(
+        renderBedrockLevelDatDiff(diff, {
+            left: target.sourceDescription,
+            right: comparisonTarget.sourceDescription,
+        }),
+    );
+}
+
 export async function runWorldLevelDatEditCommand(
     requestedWorldName: string | undefined,
     options: WorldLevelDatEditCommandOptions,
     runtime: WorldLevelDatEditCommandRuntime = {},
 ): Promise<void> {
-    const { projectRoot, config } = await loadBlurConfig(process.cwd());
+    const { projectRoot, config } = await loadWorldLevelDatCommandContext(
+        requestedWorldName,
+        options.path,
+    );
     const debug = createDebugLogger(resolveDebugEnabled(options.debug));
     const target = resolveWorldLevelDatTarget(
         projectRoot,
@@ -644,13 +840,13 @@ export async function runWorldLevelDatEditCommand(
     if (!(await exists(target.levelDatPath))) {
         const message = `Cannot edit level.dat because ${target.sourceDescription} does not exist.`;
         throw new Error(
-            target.usesConfiguredWorldSource
+            target.usesConfiguredWorldSource && config
                 ? appendWorldSourceHint(config, target.worldName, message)
                 : message,
         );
     }
 
-    await assertWorldLevelDatEditIsSafe(projectRoot, target.worldName);
+    await assertWorldLevelDatEditIsSafe(projectRoot, config, target);
 
     debug.log("world", "editing level.dat", {
         worldName: target.worldName,

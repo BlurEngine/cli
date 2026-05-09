@@ -506,7 +506,8 @@ blr world level-dat dump [worldName]
 Behavior:
 
 - resolves the selected project world source using the same world-selection rules as other `blr world` commands
-- also accepts a path-like positional argument or `--path` that points to a world directory or an explicit `level.dat` file
+- also accepts a path-like positional argument or `--path` that points to a world directory or an explicit `.dat` file
+- can run outside a BlurEngine project when an explicit world directory or `.dat` path is provided
 - reads `<worldSourcePath>/level.dat`
 - parses the Bedrock `level.dat` 8-byte header and the little-endian NBT payload
 - defaults to `simplified` output, which is easier to read but drops NBT type metadata
@@ -517,7 +518,7 @@ Behavior:
 
 Flags:
 
-- `--path <path>`: read `level.dat` from a world directory or explicit `level.dat` path
+- `--path <path>`: read `level.dat` from a world directory or explicit `.dat` path
 - `--format <format>`: `simplified | typed`
 - `--output <path>`: write the JSON dump to a file instead of stdout
 - `--debug [enabled]`: enable or disable debug logs for world `level.dat` activity
@@ -535,7 +536,8 @@ blr world level-dat edit [worldName]
 Behavior:
 
 - resolves the selected project world source using the same world-selection rules as other `blr world` commands
-- also accepts a path-like positional argument or `--path` that points to a world directory or an explicit `level.dat` file
+- also accepts a path-like positional argument or `--path` that points to a world directory or an explicit `.dat` file
+- can run outside a BlurEngine project when an explicit world directory or `.dat` path is provided
 - opens a searchable interactive editor over the parsed Bedrock `level.dat` compound tree
 - supports navigating nested compound tags, editing scalar `byte`, `short`, `int`, `long`, `float`, `double`, and `string` values, adding new scalar or compound fields, and removing existing fields
 - currently treats list and array tags as read-only and prints a short note when you try to edit them
@@ -545,8 +547,36 @@ Behavior:
 
 Flags:
 
-- `--path <path>`: read `level.dat` from a world directory or explicit `level.dat` path
+- `--path <path>`: read `level.dat` from a world directory or explicit `.dat` path
 - `--backup [enabled]`: create or skip a backup before saving changes
+- `--debug [enabled]`: enable or disable debug logs for world `level.dat` activity
+
+### `blr world level-dat diff`
+
+Compares two Bedrock `level.dat` inputs and prints a debug-friendly diff.
+
+Syntax:
+
+```text
+blr world level-dat diff [leftTarget] [rightTarget]
+```
+
+Behavior:
+
+- resolves the left-side target using the same world-selection rules as `dump` and `edit`
+- accepts two positional targets for the left and right sides
+- also supports `--path` for the left side and `--against` as an alternate right-side form
+- both sides can point to either a world directory or an explicit `.dat` file
+- can run outside a BlurEngine project when the left side is provided as an explicit world directory or `.dat` path
+- compares both Bedrock header metadata and typed NBT tag data
+- defaults to `text` output with a diff-like format
+- supports `json` output for scripting or deeper inspection
+
+Flags:
+
+- `--path <path>`: read the left-side `level.dat` from a world directory or explicit `.dat` path
+- `--against <path>`: optional alternate way to provide the right-side world name or path
+- `--format <format>`: `text | json`
 - `--debug [enabled]`: enable or disable debug logs for world `level.dat` activity
 
 ### `blr world versions`
@@ -700,9 +730,14 @@ blr world list
 blr world status
 blr world level-dat edit
 blr world level-dat edit --path ./worlds/Bedrock level
+blr world level-dat edit --path C:/Users/example/Downloads/level (1).dat
 blr world level-dat dump
 blr world level-dat dump --path ./worlds/Bedrock level
+blr world level-dat dump --path C:/Users/example/Downloads/level (1).dat
 blr world level-dat dump --format typed --output .tmp/level.dat.json
+blr world level-dat diff ./worlds/Bedrock level ./worlds/Creative Sandbox
+blr world level-dat diff --against ./worlds/Creative Sandbox
+blr world level-dat diff --path ./worlds/Bedrock level --against C:/Users/example/Downloads/level (1).dat
 blr world versions
 blr world capture
 blr world capture --force true

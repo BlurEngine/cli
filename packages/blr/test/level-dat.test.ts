@@ -147,14 +147,23 @@ async function writeWorldLevelDat(
     const worldDirectory = path.join(projectRoot, "worlds", worldName);
     await mkdir(path.join(worldDirectory, "db"), { recursive: true });
     const levelDatPath = path.join(worldDirectory, "level.dat");
+    await writeLevelDatFile(levelDatPath, createSampleLevelDatNbt(worldName));
+    return levelDatPath;
+}
+
+async function writeLevelDatFile(
+    targetPath: string,
+    data: NBT,
+): Promise<string> {
+    await mkdir(path.dirname(targetPath), { recursive: true });
     await writeFile(
-        levelDatPath,
+        targetPath,
         serializeBedrockLevelDat({
             storageVersion: 10,
-            data: createSampleLevelDatNbt(worldName),
+            data,
         }),
     );
-    return levelDatPath;
+    return targetPath;
 }
 
 test("parseBedrockLevelDat round-trips Bedrock header and little-endian NBT", () => {
@@ -242,6 +251,32 @@ test("blr world level-dat dump accepts a path-like positional argument", async (
     assert.equal(dumped.fileType, "bedrock-level-dat");
     assert.deepEqual(dumped.data, {
         LevelName: "Bedrock level",
+        GameType: 1,
+        Difficulty: 2,
+        abilities: {
+            mayfly: 1,
+        },
+    });
+});
+
+test("blr world level-dat dump accepts standalone .dat file paths outside a BlurEngine project", async (t) => {
+    const workingDirectory = await createTempDirectory(t, "blr-level-dat-");
+    const copiedLevelDatPath = path.join(workingDirectory, "level (1).dat");
+    await writeLevelDatFile(
+        copiedLevelDatPath,
+        createSampleLevelDatNbt("Copied World"),
+    );
+
+    const result = runBuiltCli(
+        ["world", "level-dat", "dump", "./level (1).dat"],
+        workingDirectory,
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const dumped = JSON.parse(result.stdout) as Record<string, unknown>;
+    assert.equal(dumped.fileType, "bedrock-level-dat");
+    assert.deepEqual(dumped.data, {
+        LevelName: "Copied World",
         GameType: 1,
         Difficulty: 2,
         abilities: {
@@ -362,6 +397,96 @@ test("blr world level-dat dump supports typed output written to a file", async (
     assert.equal(dumped.data.value.abilities.type, "compound");
     assert.equal(dumped.data.value.abilities.value.mayfly.type, "byte");
     assert.equal(dumped.data.value.abilities.value.mayfly.value, 1);
+});
+
+test("blr world level-dat diff compares two standalone .dat files with a text diff", async (t) => {
+    const workingDirectory = await createTempDirectory(t, "blr-level-dat-");
+    await writeLevelDatFile(
+        path.join(workingDirectory, "left.dat"),
+        createSampleLevelDatNbt("Left World"),
+    );
+    await writeLevelDatFile(path.join(workingDirectory, "right.dat"), {
+        name: "",
+        type: "compound",
+        value: {
+            LevelName: {
+                type: "string",
+                value: "Right World",
+            },
+            GameType: {
+                type: "byte",
+                value: 1,
+            },
+            abilities: {
+                type: "compound",
+                value: {
+                    mayfly: {
+                        type: "byte",
+                        value: 0,
+                    },
+                },
+            },
+            experiments: {
+                type: "compound",
+                value: {
+                    gametest: {
+                        type: "byte",
+                        value: 1,
+                    },
+                },
+            },
+        },
+    });
+
+    const result = runBuiltCli(
+        [
+            "world",
+            "level-dat",
+            "diff",
+            "./left.dat",
+            "--against",
+            "./right.dat",
+        ],
+        workingDirectory,
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^--- \.\/left\.dat/m);
+    assert.match(result.stdout, /^\+\+\+ \.\/right\.dat/m);
+    assert.match(result.stdout, /^~ LevelName$/m);
+    assert.match(result.stdout, /^  - \(string\) "Left World"$/m);
+    assert.match(result.stdout, /^  \+ \(string\) "Right World"$/m);
+    assert.match(result.stdout, /^~ GameType$/m);
+    assert.match(result.stdout, /^  - \(int\) 1$/m);
+    assert.match(result.stdout, /^  \+ \(byte\) 1$/m);
+    assert.match(
+        result.stdout,
+        /^\+ experiments \(compound\) \{"gametest":1\}$/m,
+    );
+});
+
+test("blr world level-dat diff accepts two positional targets", async (t) => {
+    const workingDirectory = await createTempDirectory(t, "blr-level-dat-");
+    await writeLevelDatFile(
+        path.join(workingDirectory, "left.dat"),
+        createSampleLevelDatNbt("Left World"),
+    );
+    await writeLevelDatFile(
+        path.join(workingDirectory, "right.dat"),
+        createSampleLevelDatNbt("Right World"),
+    );
+
+    const result = runBuiltCli(
+        ["world", "level-dat", "diff", "./left.dat", "./right.dat"],
+        workingDirectory,
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^--- \.\/left\.dat/m);
+    assert.match(result.stdout, /^\+\+\+ \.\/right\.dat/m);
+    assert.match(result.stdout, /^~ LevelName$/m);
+    assert.match(result.stdout, /^  - \(string\) "Left World"$/m);
+    assert.match(result.stdout, /^  \+ \(string\) "Right World"$/m);
 });
 
 test("editBedrockLevelDatInteractively updates nested scalar tags and long values", async (t) => {
@@ -784,6 +909,65 @@ test("runWorldLevelDatEditCommand saves edits and writes a backup", async (t) =>
             mayfly: 1,
         },
     });
+});
+
+test("runWorldLevelDatEditCommand edits a standalone .dat file outside a BlurEngine project", async (t) => {
+    const workingDirectory = await createTempDirectory(
+        t,
+        "blr-level-dat-edit-",
+    );
+    const levelDatPath = await writeLevelDatFile(
+        path.join(workingDirectory, "level (1).dat"),
+        createSampleLevelDatNbt("Copied World"),
+    );
+    const previousWorkingDirectory = process.cwd();
+    process.chdir(workingDirectory);
+    t.after(() => {
+        process.chdir(previousWorkingDirectory);
+    });
+    const prompt = createPromptSequence([
+        {
+            choice: {
+                kind: "field",
+                fieldName: "LevelName",
+            },
+        },
+        {
+            value: "Edited Copy",
+        },
+        {
+            choice: {
+                kind: "save",
+            },
+        },
+    ]);
+    t.mock.method(console, "log", () => {});
+
+    await runWorldLevelDatEditCommand(
+        "./level (1).dat",
+        {},
+        {
+            canPrompt: () => true,
+            prompt,
+        },
+    );
+
+    const saved = await readBedrockLevelDatFile(levelDatPath);
+    const simplified = createBedrockLevelDatDump(saved, "simplified");
+    assert.deepEqual(simplified.data, {
+        LevelName: "Edited Copy",
+        GameType: 1,
+        Difficulty: 2,
+        abilities: {
+            mayfly: 1,
+        },
+    });
+
+    const directoryEntries = await readdir(path.dirname(levelDatPath));
+    const backupFileName = directoryEntries.find((entry) =>
+        entry.startsWith("level (1).dat.blr-backup-"),
+    );
+    assert.ok(backupFileName, "expected a timestamped standalone backup");
 });
 
 test("runWorldLevelDatEditCommand saves added and removed fields", async (t) => {
