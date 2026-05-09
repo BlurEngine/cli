@@ -389,10 +389,10 @@ Notes:
   - `auto`: pull automatically when reconciliation is needed
   - `manual`: never pull automatically
 - `worldSync.runtimeWorldMode` controls how `blr dev` handles replacing the runtime BDS world from the project world:
-  - `prompt`: ask before replacing an existing runtime world
+  - `prompt`: ask before replacing an existing runtime world when the project source changed since the last runtime seed
   - `preserve`: keep the existing runtime world
-  - `replace`: replace the runtime world automatically before startup
-  - `backup`: move the existing runtime world into `worlds_backups/` and then replace it
+  - `replace`: replace the runtime world automatically from the project world before startup
+  - `backup`: move the existing runtime world into `worlds_backups/` and then replace it before startup
 - runtime-world replacement and backup only happen before BDS starts; `blr` does not modify a running server world
 - `watch-world` starts after startup reconciliation and captures runtime world state back into the project source
 - `watch-allowlist` captures both retained runtime server-state files:

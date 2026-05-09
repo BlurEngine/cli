@@ -145,11 +145,12 @@ Runtime world safety:
 
 - `runtimeWorldMode` controls how `dev` seeds the BDS runtime world from the project world
 - if the runtime world is missing, `dev` copies the current project world into BDS automatically
-- if the runtime world exists and the project world source changed since the last runtime seed:
+- if the runtime world exists:
+  - `replace`: replace it automatically from the project world before startup
+  - `backup`: move it into `worlds_backups/` and then replace it before startup
+- with `prompt` and `preserve`, `dev` compares the project world source against the last runtime seed:
   - `prompt`: ask before replacing it
   - `preserve`: keep it
-  - `replace`: replace it automatically
-  - `backup`: move it into `worlds_backups/` and then replace it
 - runtime backup and replacement only happen before BDS starts
 
 Flags:

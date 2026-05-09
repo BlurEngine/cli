@@ -832,6 +832,23 @@ export async function resolveRuntimeWorldDecision(options: {
         };
     }
 
+    const runtimeWorldMode =
+        options.config.dev.localServer.worldSync.runtimeWorldMode;
+    switch (runtimeWorldMode) {
+        case "replace":
+            return {
+                action: "replace",
+                sourceIdentity,
+            };
+        case "backup":
+            return {
+                action: "backup-and-replace",
+                sourceIdentity,
+            };
+        default:
+            break;
+    }
+
     const lastRuntimeSeed = await readRuntimeWorldSeedState(
         options.projectRoot,
         options.runtimeState.worldName,
@@ -843,8 +860,6 @@ export async function resolveRuntimeWorldDecision(options: {
         };
     }
 
-    const runtimeWorldMode =
-        options.config.dev.localServer.worldSync.runtimeWorldMode;
     switch (runtimeWorldMode) {
         case "preserve":
             return {
@@ -854,16 +869,6 @@ export async function resolveRuntimeWorldDecision(options: {
                     options.runtimeState.worldName,
                     "keeping existing local-server world (dev.localServer.worldSync.runtimeWorldMode=preserve)",
                 ),
-            };
-        case "replace":
-            return {
-                action: "replace",
-                sourceIdentity,
-            };
-        case "backup":
-            return {
-                action: "backup-and-replace",
-                sourceIdentity,
             };
         case "prompt":
         default:

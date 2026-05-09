@@ -14,6 +14,7 @@ import {
     shouldUseInteractiveDevConfiguration,
 } from "../src/commands/dev.js";
 import { writeRuntimeWorldSeedState } from "../src/world-internal-state.js";
+import { computeProjectWorldSourceIdentity } from "../src/world-source-identity.js";
 import {
     createJsonResponse,
     createTempDirectory,
@@ -287,6 +288,73 @@ test("resolveRuntimeWorldDecision labels stale runtime worlds when preserve mode
         decision.note ?? "",
         /dev\.localServer\.worldSync\.runtimeWorldMode=preserve/,
     );
+});
+
+test("resolveRuntimeWorldDecision refreshes runtime worlds in replace mode even when the last seed matches", async (t) => {
+    const worldName = "Bedrock level";
+    const projectRoot = await createTempDirectory(t, "blr-dev-runtime-force-");
+    await createConfigLoadProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        dev: {
+            localServer: {
+                worldName,
+                worldSync: {
+                    runtimeWorldMode: "replace",
+                },
+            },
+        },
+    });
+
+    const worldSourceDirectory = path.join(projectRoot, "worlds", worldName);
+    const runtimeWorldDirectory = path.join(
+        projectRoot,
+        ".blr",
+        "bds",
+        "server",
+        "worlds",
+        worldName,
+    );
+    await mkdir(path.join(worldSourceDirectory, "db"), { recursive: true });
+    await mkdir(path.join(runtimeWorldDirectory, "db"), { recursive: true });
+    await writeFile(path.join(worldSourceDirectory, "db", "CURRENT"), "new");
+    await writeFile(path.join(runtimeWorldDirectory, "db", "CURRENT"), "old");
+    const sourceIdentity =
+        await computeProjectWorldSourceIdentity(worldSourceDirectory);
+    assert.ok(sourceIdentity);
+    await writeRuntimeWorldSeedState(projectRoot, {
+        worldName,
+        sourceIdentity,
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    const decision = await resolveRuntimeWorldDecision({
+        projectRoot,
+        config,
+        runtimeState: {
+            channel: "stable",
+            version: "1.26.0.2",
+            platform: "linux",
+            cacheDirectory: path.join(projectRoot, ".blr", "bds", "cache"),
+            serverDirectory: path.join(projectRoot, ".blr", "bds", "server"),
+            worldName,
+            worldSourcePath: `worlds/${worldName}`,
+            worldDirectory: runtimeWorldDirectory,
+            worldSourceDirectory,
+            executablePath: path.join(
+                projectRoot,
+                ".blr",
+                "bds",
+                "server",
+                "bedrock_server",
+            ),
+            zipPath: path.join(projectRoot, ".blr", "bds", "cache", "bds.zip"),
+            customExecutableInjected: false,
+        },
+    });
+
+    assert.equal(decision.action, "replace");
 });
 
 test("buildRemoteWorldSyncFailureMessage replaces raw unknown backend errors with a helpful dev warning", () => {

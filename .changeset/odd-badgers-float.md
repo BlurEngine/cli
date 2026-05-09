@@ -15,3 +15,7 @@ changes in Bedrock `level.dat` data.
 `blr dev` now labels stale local-server runtime worlds more clearly when the
 project world source differs from the last runtime seed, including preserve and
 non-interactive keep paths.
+
+`dev.localServer.worldSync.runtimeWorldMode=replace` now force-refreshes the
+local-server runtime world from the project world before startup, even when the
+runtime seed state says the same project world was copied previously.
