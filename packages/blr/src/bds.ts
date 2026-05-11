@@ -3,6 +3,7 @@ import path from "node:path";
 import { chmod, copyFile, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { createInterface, type Interface } from "node:readline";
 import AdmZip from "adm-zip";
+import type { IDisposable, IPty } from "node-pty";
 import { resolveDirectBedrockDownloadUrl } from "./bedrock-downloads.js";
 import {
     resolvePackFeatureSelection,
@@ -55,6 +56,221 @@ type PermissionsEntry = {
 type BdsApplyMode = "start" | "reload" | "restart";
 type BdsWorldApplyMode = "sync-if-missing" | "preserve" | "replace";
 type BdsExitListener = (code: number | null) => void;
+export type BdsOutputRelayMode = "inherit" | "pipe" | "pty";
+
+type NodePtyModule = typeof import("node-pty");
+
+let nodePtyModule: NodePtyModule | undefined;
+
+async function loadNodePtyModule(): Promise<NodePtyModule | undefined> {
+    if (nodePtyModule) {
+        return nodePtyModule;
+    }
+
+    try {
+        nodePtyModule = await import("node-pty");
+        return nodePtyModule;
+    } catch {
+        return undefined;
+    }
+}
+
+export function resolveBdsOutputRelayMode(input: {
+    compactScriptingLogs: boolean;
+    stdoutIsTTY: boolean;
+    stderrIsTTY: boolean;
+    ptyAvailable: boolean;
+}): BdsOutputRelayMode {
+    if (!input.compactScriptingLogs) {
+        return "inherit";
+    }
+
+    if (input.stdoutIsTTY && input.stderrIsTTY && input.ptyAvailable) {
+        return "pty";
+    }
+
+    return "pipe";
+}
+
+function isBdsScriptingLogLine(line: string): boolean {
+    return line.includes("] [Scripting]");
+}
+
+function stripAnsiSequences(value: string): string {
+    return value
+        .replace(/\u001B\]0;[^\u0007]*(?:\u0007|\u001B\\)/g, "")
+        .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+export class BdsPtyOutputFilter {
+    private pending = "";
+    private beforeFirstPrintable = true;
+
+    write(chunk: string): string {
+        return this.process(`${this.pending}${chunk}`, false);
+    }
+
+    end(): string {
+        return this.process(this.pending, true);
+    }
+
+    private process(input: string, flush: boolean): string {
+        this.pending = "";
+        let output = "";
+        let index = 0;
+
+        while (index < input.length) {
+            const character = input[index];
+
+            if (character === "\u001B") {
+                const next = input[index + 1];
+                if (typeof next === "undefined") {
+                    this.pending = flush ? "" : input.slice(index);
+                    break;
+                }
+
+                if (next === "]") {
+                    const terminator = findOscTerminator(input, index + 2);
+                    if (!terminator) {
+                        this.pending = flush ? "" : input.slice(index);
+                        break;
+                    }
+                    index = terminator.end;
+                    continue;
+                }
+
+                if (next === "[") {
+                    const sequenceEnd = findCsiSequenceEnd(input, index + 2);
+                    if (sequenceEnd < 0) {
+                        this.pending = flush ? "" : input.slice(index);
+                        break;
+                    }
+
+                    const sequence = input.slice(index, sequenceEnd + 1);
+                    if (
+                        input[sequenceEnd] === "m" &&
+                        !(
+                            this.beforeFirstPrintable &&
+                            isResetSgrSequence(sequence)
+                        )
+                    ) {
+                        output += sequence;
+                    }
+                    index = sequenceEnd + 1;
+                    continue;
+                }
+
+                index += 2;
+                continue;
+            }
+
+            if (isAsciiControl(character)) {
+                if (
+                    !this.beforeFirstPrintable &&
+                    (character === "\r" ||
+                        character === "\n" ||
+                        character === "\t")
+                ) {
+                    output += character;
+                }
+                index += 1;
+                continue;
+            }
+
+            this.beforeFirstPrintable = false;
+            output += character;
+            index += 1;
+        }
+
+        return output;
+    }
+}
+
+function findOscTerminator(
+    input: string,
+    startIndex: number,
+): { end: number } | undefined {
+    const bellIndex = input.indexOf("\u0007", startIndex);
+    const stIndex = input.indexOf("\u001B\\", startIndex);
+
+    if (bellIndex < 0 && stIndex < 0) {
+        return undefined;
+    }
+
+    if (bellIndex >= 0 && (stIndex < 0 || bellIndex < stIndex)) {
+        return { end: bellIndex + 1 };
+    }
+
+    return { end: stIndex + 2 };
+}
+
+function findCsiSequenceEnd(input: string, startIndex: number): number {
+    for (let index = startIndex; index < input.length; index += 1) {
+        const code = input.charCodeAt(index);
+        if (code >= 0x40 && code <= 0x7e) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+function isResetSgrSequence(sequence: string): boolean {
+    return /^\u001B\[(?:0*)?m$/.test(sequence);
+}
+
+function isAsciiControl(character: string): boolean {
+    const code = character.charCodeAt(0);
+    return code < 0x20 || code === 0x7f;
+}
+
+export class BdsScriptingLogCompactor {
+    private pending = "";
+    private suppressBlankAfterScripting = false;
+
+    write(chunk: string): string {
+        this.pending += chunk;
+        let output = "";
+
+        for (;;) {
+            const lineEnd = this.pending.indexOf("\n");
+            if (lineEnd < 0) {
+                break;
+            }
+
+            const line = this.pending.slice(0, lineEnd + 1);
+            this.pending = this.pending.slice(lineEnd + 1);
+            output += this.processLine(line);
+        }
+
+        return output;
+    }
+
+    end(): string {
+        if (this.pending.length === 0) {
+            return "";
+        }
+
+        const output = this.processLine(this.pending);
+        this.pending = "";
+        return output;
+    }
+
+    private processLine(line: string): string {
+        const content = line.endsWith("\n")
+            ? line.slice(0, -1).replace(/\r$/, "")
+            : line;
+
+        if (
+            this.suppressBlankAfterScripting &&
+            stripAnsiSequences(content).trim().length === 0
+        ) {
+            return "";
+        }
+
+        this.suppressBlankAfterScripting = isBdsScriptingLogLine(content);
+        return line;
+    }
+}
 const STATUS_CONTROL_C_EXIT = 3221225786;
 
 export type ResolvedBdsState = {
@@ -1164,6 +1380,8 @@ export async function syncProjectToBds(
 
 export class BdsServerController {
     private child: ChildProcess | undefined;
+    private terminal: IPty | undefined;
+    private terminalExitCode: number | null | undefined;
     private state: ResolvedBdsState | undefined;
     private consoleRelay: Interface | undefined;
     private suppressNextExitNotification = false;
@@ -1178,6 +1396,7 @@ export class BdsServerController {
             restartOnWorldChange?: boolean;
             copyPacks?: PackFeatureSelectionOverride;
             attachPacks?: PackFeatureSelectionOverride;
+            compactScriptingLogs?: boolean;
             debug?: DebugLogger;
             reporter?: BdsProvisionReporter;
         } = {},
@@ -1203,7 +1422,10 @@ export class BdsServerController {
     }
 
     isRunning(): boolean {
-        return Boolean(this.child && this.child.exitCode === null);
+        return Boolean(
+            (this.child && this.child.exitCode === null) ||
+            (this.terminal && this.terminalExitCode === null),
+        );
     }
 
     onExit(listener: BdsExitListener): () => void {
@@ -1289,8 +1511,13 @@ export class BdsServerController {
     async stop(
         options: { suppressExitNotification?: boolean } = {},
     ): Promise<void> {
-        if (!this.child || this.child.exitCode !== null) {
+        if (
+            !(this.child && this.child.exitCode === null) &&
+            !(this.terminal && this.terminalExitCode === null)
+        ) {
             this.child = undefined;
+            this.terminal = undefined;
+            this.terminalExitCode = undefined;
             return;
         }
 
@@ -1300,7 +1527,23 @@ export class BdsServerController {
         this.suppressNextExitNotification = Boolean(
             options.suppressExitNotification,
         );
+        if (this.child && this.child.exitCode === null) {
+            await this.stopChildProcess();
+            return;
+        }
+
+        if (this.terminal && this.terminalExitCode === null) {
+            await this.stopPtyProcess();
+            return;
+        }
+    }
+
+    private async stopChildProcess(): Promise<void> {
         const child = this.child;
+        if (!child) {
+            return;
+        }
+
         await new Promise<void>((resolve) => {
             let settled = false;
             const finish = () => {
@@ -1334,6 +1577,46 @@ export class BdsServerController {
         });
     }
 
+    private async stopPtyProcess(): Promise<void> {
+        const terminal = this.terminal;
+        if (!terminal) {
+            return;
+        }
+
+        await new Promise<void>((resolve) => {
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                this.terminal = undefined;
+                this.terminalExitCode = undefined;
+                resolve();
+            };
+
+            const forceKillHandle = setTimeout(() => {
+                try {
+                    terminal.kill();
+                } catch {}
+                finish();
+            }, 5000);
+
+            terminal.onExit(() => {
+                clearTimeout(forceKillHandle);
+                finish();
+            });
+
+            try {
+                this.sendCommand("stop");
+            } catch {
+                clearTimeout(forceKillHandle);
+                try {
+                    terminal.kill();
+                } catch {}
+                finish();
+            }
+        });
+    }
+
     private async start(state: ResolvedBdsState): Promise<void> {
         if (this.isRunning()) {
             return;
@@ -1354,17 +1637,61 @@ export class BdsServerController {
             );
         }
 
+        const compactScriptingLogs =
+            this.options.compactScriptingLogs ??
+            this.config.dev.localServer.compactScriptingLogs;
+        const ptyModule = compactScriptingLogs
+            ? await loadNodePtyModule()
+            : undefined;
+        const outputRelayMode = resolveBdsOutputRelayMode({
+            compactScriptingLogs,
+            stdoutIsTTY: Boolean(process.stdout.isTTY),
+            stderrIsTTY: Boolean(process.stderr.isTTY),
+            ptyAvailable: Boolean(ptyModule),
+        });
         this.options.debug?.log("bds", "starting managed server", {
             executablePath: state.executablePath,
             cwd: state.serverDirectory,
             worldName: state.worldName,
+            compactScriptingLogs,
+            outputRelayMode,
         });
+
+        if (outputRelayMode === "pty" && ptyModule) {
+            try {
+                this.startPty(state, ptyModule);
+                return;
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                console.error(
+                    `[dev] Warning: local-server PTY output relay failed (${message}). Falling back to piped output.`,
+                );
+                this.options.debug?.log("bds", "PTY output relay failed", {
+                    message,
+                });
+            }
+        }
+
+        this.startChildProcess(state, outputRelayMode);
+    }
+
+    private startChildProcess(
+        state: ResolvedBdsState,
+        outputRelayMode: BdsOutputRelayMode,
+    ): void {
+        const outputStdio = outputRelayMode === "pipe" ? "pipe" : "inherit";
         const child = spawn(state.executablePath, [], {
             cwd: state.serverDirectory,
-            stdio: ["pipe", "inherit", "inherit"],
+            stdio: ["pipe", outputStdio, outputStdio],
         });
         this.child = child;
-        this.attachConsoleRelay(child);
+        if (outputRelayMode === "pipe") {
+            this.attachOutputRelay(child);
+        }
+        this.attachConsoleRelay((listener) => {
+            child.once("exit", listener);
+        });
 
         child.on("error", (error) => {
             console.error(`[local-server] ${error.message}`);
@@ -1372,33 +1699,146 @@ export class BdsServerController {
 
         child.on("exit", (code) => {
             this.child = undefined;
-            const suppressNotification = this.suppressNextExitNotification;
-            this.suppressNextExitNotification = false;
-            if (!suppressNotification) {
-                if (code === STATUS_CONTROL_C_EXIT) {
-                    console.log("[dev] local-server interrupted.");
-                } else {
-                    console.log(
-                        `[dev] local-server exited with code ${String(code ?? 0)}`,
-                    );
+            this.notifyExit(code);
+        });
+    }
+
+    private startPty(state: ResolvedBdsState, ptyModule: NodePtyModule): void {
+        const outputFilter = new BdsPtyOutputFilter();
+        const compactor = new BdsScriptingLogCompactor();
+        const terminal = ptyModule.spawn(state.executablePath, [], {
+            name: process.env.TERM || "xterm-256color",
+            cols: process.stdout.columns || 80,
+            rows: process.stdout.rows || 24,
+            cwd: state.serverDirectory,
+            env: {
+                ...process.env,
+                TERM: process.env.TERM || "xterm-256color",
+            },
+            useConpty: true,
+        });
+        this.terminal = terminal;
+        this.terminalExitCode = null;
+
+        const disposables: IDisposable[] = [];
+        const resize = () => {
+            try {
+                terminal.resize(
+                    process.stdout.columns || 80,
+                    process.stdout.rows || 24,
+                );
+            } catch {}
+        };
+
+        process.stdout.on("resize", resize);
+        disposables.push(
+            terminal.onData((data) => {
+                const output = compactor.write(outputFilter.write(data));
+                if (output.length > 0) {
+                    process.stdout.write(output);
                 }
-                for (const listener of this.exitListeners) {
-                    listener(code ?? 0);
+            }),
+        );
+        disposables.push(
+            terminal.onExit(({ exitCode }) => {
+                process.stdout.off("resize", resize);
+                for (const disposable of disposables) {
+                    disposable.dispose();
                 }
+
+                const output = compactor.end();
+                const filteredOutput = outputFilter.end() + output;
+                if (filteredOutput.length > 0) {
+                    process.stdout.write(filteredOutput);
+                }
+
+                this.terminalExitCode = exitCode;
+                this.terminal = undefined;
+                this.notifyExit(exitCode);
+            }),
+        );
+
+        this.attachConsoleRelay((listener) => {
+            terminal.onExit(() => {
+                listener();
+            });
+        });
+    }
+
+    private notifyExit(code: number | null): void {
+        const suppressNotification = this.suppressNextExitNotification;
+        this.suppressNextExitNotification = false;
+        if (suppressNotification) {
+            return;
+        }
+
+        if (code === STATUS_CONTROL_C_EXIT) {
+            console.log("[dev] local-server interrupted.");
+        } else {
+            console.log(
+                `[dev] local-server exited with code ${String(code ?? 0)}`,
+            );
+        }
+        for (const listener of this.exitListeners) {
+            listener(code ?? 0);
+        }
+    }
+
+    private attachOutputRelay(child: ChildProcess): void {
+        const stdoutCompactor = new BdsScriptingLogCompactor();
+        const stderrCompactor = new BdsScriptingLogCompactor();
+
+        child.stdout?.setEncoding("utf8");
+        child.stdout?.on("data", (chunk: string) => {
+            const output = stdoutCompactor.write(chunk);
+            if (output.length > 0) {
+                process.stdout.write(output);
+            }
+        });
+        child.stdout?.on("end", () => {
+            const output = stdoutCompactor.end();
+            if (output.length > 0) {
+                process.stdout.write(output);
+            }
+        });
+
+        child.stderr?.setEncoding("utf8");
+        child.stderr?.on("data", (chunk: string) => {
+            const output = stderrCompactor.write(chunk);
+            if (output.length > 0) {
+                process.stderr.write(output);
+            }
+        });
+        child.stderr?.on("end", () => {
+            const output = stderrCompactor.end();
+            if (output.length > 0) {
+                process.stderr.write(output);
             }
         });
     }
 
     private sendCommand(command: string): void {
         const child = this.child;
-        if (!child || child.exitCode !== null) {
+        if (child && child.exitCode === null) {
+            this.options.debug?.log("bds", "sending server command", {
+                command,
+            });
+            child.stdin?.write(`${command}\n`);
             return;
         }
+
+        const terminal = this.terminal;
+        if (!terminal || this.terminalExitCode !== null) {
+            return;
+        }
+
         this.options.debug?.log("bds", "sending server command", { command });
-        child.stdin?.write(`${command}\n`);
+        terminal.write(`${command}\r`);
     }
 
-    private attachConsoleRelay(child: ChildProcess): void {
+    private attachConsoleRelay(
+        registerExitListener: (listener: () => void) => void,
+    ): void {
         if (this.consoleRelay) {
             return;
         }
@@ -1417,7 +1857,7 @@ export class BdsServerController {
             process.emit("SIGINT");
         });
 
-        child.once("exit", () => {
+        registerExitListener(() => {
             if (this.consoleRelay !== relay) {
                 return;
             }

@@ -296,6 +296,10 @@
           "type": "boolean",
           "description": "Restart and reset the local server when the project world source changes."
         },
+        "compactScriptingLogs": {
+          "type": "boolean",
+          "description": "Remove extra blank lines emitted after BDS scripting log entries."
+        },
         "copy": {
           "$ref": "#/definitions/BlurConfigPackFeatureSelectionFile",
           "description": "Pack copy defaults for local-server staging."

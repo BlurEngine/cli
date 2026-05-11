@@ -347,6 +347,7 @@ Fields:
 - `worldName`: active BDS world name
 - `worldSourcePath`: project-owned raw world source path
 - `restartOnWorldChange`: restart/reset server world when the project world source changes
+- `compactScriptingLogs`: remove extra blank lines emitted after BDS scripting log entries
 - `copy.behaviorPack`: sync the behavior pack into the provisioned local server
 - `copy.resourcePack`: sync the resource pack into the provisioned local server
 - `attach.behaviorPack`: attach the behavior pack in `world_behavior_packs.json`
@@ -364,6 +365,7 @@ Defaults if omitted:
 - `worldName`: `Bedrock level`
 - `worldSourcePath`: `worlds/<worldName>`
 - `restartOnWorldChange`: `true`
+- `compactScriptingLogs`: `true`
 - `copy.behaviorPack`: follows project feature presence
 - `copy.resourcePack`: follows project feature presence
 - `attach.behaviorPack`: follows project feature presence
@@ -380,6 +382,7 @@ Notes:
 - world-aware commands such as `watch-world`, `package mctemplate`, and `package mcworld` require that path to contain a real Bedrock world with a `db/` directory
 - `blr dev --world <worldName>` and `blr package --world <worldName>` can override the configured active world for a single run
 - `blr world use <worldName>` updates the configured active world and keeps the default `worlds/<worldName>` source-path convention unless the project has an explicit custom `worldSourcePath`
+- `compactScriptingLogs` only changes terminal output from the managed local server; BDS content-log settings remain enabled
 - `copy.*` controls whether the current project pack types are copied into the runtime server
 - `attach.*` controls whether the current project pack ids are written into world hook files
 - if `server/server.properties` exists, `blr` overlays its authored properties onto the runtime BDS `server.properties` file before forcing the managed `level-name`, `allow-list`, permission, gamemode, and content-log settings needed for `blr dev`
@@ -404,6 +407,7 @@ Notes:
   - `--local-server-resource-pack`
   - `--attach-behavior-pack`
   - `--attach-resource-pack`
+  - `--compact-scripting-logs`
 
 ## Inferred State
 
@@ -446,6 +450,7 @@ Config-backed overrides:
   - `minecraft.channel` -> `BLR_MINECRAFT_CHANNEL`
   - `minecraft.targetVersion` -> `BLR_MINECRAFT_TARGETVERSION`
   - `dev.localServer.worldName` -> `BLR_DEV_LOCALSERVER_WORLDNAME`
+  - `dev.localServer.compactScriptingLogs` -> `BLR_DEV_LOCALSERVER_COMPACTSCRIPTINGLOGS`
   - `dev.localServer.worldSync.projectWorldMode` -> `BLR_DEV_LOCALSERVER_WORLDSYNC_PROJECTWORLDMODE`
   - `dev.localServer.worldSync.runtimeWorldMode` -> `BLR_DEV_LOCALSERVER_WORLDSYNC_RUNTIMEWORLDMODE`
   - `dev.localDeploy.copy.behaviorPack` -> `BLR_DEV_LOCALDEPLOY_COPY_BEHAVIORPACK`

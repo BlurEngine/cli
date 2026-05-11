@@ -340,6 +340,10 @@ function coerceBlurConfigFile(
                     typeof localServer.restartOnWorldChange === "boolean"
                         ? localServer.restartOnWorldChange
                         : undefined,
+                compactScriptingLogs:
+                    typeof localServer.compactScriptingLogs === "boolean"
+                        ? localServer.compactScriptingLogs
+                        : undefined,
                 copy: {
                     behaviorPack:
                         typeof localServerCopy.behaviorPack === "boolean"
@@ -700,6 +704,10 @@ export async function loadBlurConfig(
                     ),
                 restartOnWorldChange: ensureBoolean(
                     configFile.dev?.localServer?.restartOnWorldChange,
+                    true,
+                ),
+                compactScriptingLogs: ensureBoolean(
+                    configFile.dev?.localServer?.compactScriptingLogs,
                     true,
                 ),
                 allowlist: ensureStringArray(

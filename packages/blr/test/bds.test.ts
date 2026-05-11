@@ -4,12 +4,15 @@ import path from "node:path";
 import test from "node:test";
 import AdmZip from "adm-zip";
 import {
+    BdsPtyOutputFilter,
+    BdsScriptingLogCompactor,
     backupRuntimeWorldForBdsStartup,
     bootstrapProjectWorldSourceFromBds,
     captureAllowlistFromBds,
     capturePermissionsFromBds,
     ensureBds,
     prefetchBdsArchive,
+    resolveBdsOutputRelayMode,
 } from "../src/bds.js";
 import { createTempDirectory } from "./helpers.js";
 
@@ -21,6 +24,129 @@ async function pathExists(targetPath: string): Promise<boolean> {
         return false;
     }
 }
+
+test("BdsScriptingLogCompactor removes blank lines immediately after scripting logs", () => {
+    const compactor = new BdsScriptingLogCompactor();
+    const output =
+        compactor.write(
+            [
+                "[2026-05-11 20:15:38:587 INFO] [Scripting] spawn minecraft:xp_orb Spawned []\n",
+                "\n",
+                "[2026-05-11 20:15:38:587 INFO] Server started.\n",
+                "\n",
+            ].join(""),
+        ) + compactor.end();
+
+    assert.equal(
+        output,
+        [
+            "[2026-05-11 20:15:38:587 INFO] [Scripting] spawn minecraft:xp_orb Spawned []\n",
+            "[2026-05-11 20:15:38:587 INFO] Server started.\n",
+            "\n",
+        ].join(""),
+    );
+});
+
+test("BdsScriptingLogCompactor handles chunk boundaries and preserves non-scripting spacing", () => {
+    const compactor = new BdsScriptingLogCompactor();
+    const output =
+        compactor.write(
+            "[2026-05-11 20:15:38:587 INFO] [Scripting] itemStart",
+        ) +
+        compactor.write("Use minecraft:fishing_rod SupaaaaaaHam 0\r\n\r\n") +
+        compactor.write(
+            "[2026-05-11 20:15:38:588 INFO] Player connected\r\n\r\n",
+        ) +
+        compactor.end();
+
+    assert.equal(
+        output,
+        [
+            "[2026-05-11 20:15:38:587 INFO] [Scripting] itemStartUse minecraft:fishing_rod SupaaaaaaHam 0\r\n",
+            "[2026-05-11 20:15:38:588 INFO] Player connected\r\n",
+            "\r\n",
+        ].join(""),
+    );
+});
+
+test("BdsScriptingLogCompactor removes ANSI-only blank lines after scripting logs", () => {
+    const compactor = new BdsScriptingLogCompactor();
+    const output =
+        compactor.write(
+            [
+                "\u001B[33m[2026-05-11 21:03:17:525 WARN] [Scripting] [Fishing] catch player=SupaaaaaaHam\u001B[39m\r\n",
+                "\u001B[39m\r\n",
+                "[2026-05-11 21:03:17:525 INFO] [Scripting] spawn minecraft:item Spawned []\r\n",
+            ].join(""),
+        ) + compactor.end();
+
+    assert.equal(
+        output,
+        [
+            "\u001B[33m[2026-05-11 21:03:17:525 WARN] [Scripting] [Fishing] catch player=SupaaaaaaHam\u001B[39m\r\n",
+            "[2026-05-11 21:03:17:525 INFO] [Scripting] spawn minecraft:item Spawned []\r\n",
+        ].join(""),
+    );
+});
+
+test("BdsPtyOutputFilter removes ConPTY preamble while preserving ANSI colors", () => {
+    const filter = new BdsPtyOutputFilter();
+    const output =
+        filter.write(
+            "\u001B[2J\u001B[m\u001B[H\u001B[31m[INFO] colored\u001B[39m\r\n",
+        ) + filter.end();
+
+    assert.equal(output, "\u001B[31m[INFO] colored\u001B[39m\r\n");
+});
+
+test("BdsPtyOutputFilter removes split ConPTY preamble before first log text", () => {
+    const filter = new BdsPtyOutputFilter();
+    const output =
+        filter.write("\u001B]0;bedrock_server.exe\u0007") +
+        filter.write("\u001B[?25h") +
+        filter.write("\u001B[2J\u001B[m") +
+        filter.write("\u001B[H\u001B[32m[INFO] first\u001B[39m\r\n") +
+        filter.end();
+
+    assert.equal(output, "\u001B[32m[INFO] first\u001B[39m\r\n");
+});
+
+test("BdsPtyOutputFilter removes cursor movement after output starts while preserving ANSI colors", () => {
+    const filter = new BdsPtyOutputFilter();
+    const output =
+        filter.write("[INFO] started\r\n") +
+        filter.write("\u001B[H\u001B[2J\u001B[33m[INFO] next\u001B[39m\r\n") +
+        filter.end();
+
+    assert.equal(
+        output,
+        "[INFO] started\r\n\u001B[33m[INFO] next\u001B[39m\r\n",
+    );
+});
+
+test("resolveBdsOutputRelayMode uses a PTY for compacted TTY output when available", () => {
+    assert.equal(
+        resolveBdsOutputRelayMode({
+            compactScriptingLogs: true,
+            stdoutIsTTY: true,
+            stderrIsTTY: true,
+            ptyAvailable: true,
+        }),
+        "pty",
+    );
+});
+
+test("resolveBdsOutputRelayMode falls back to pipes when PTY support is unavailable", () => {
+    assert.equal(
+        resolveBdsOutputRelayMode({
+            compactScriptingLogs: true,
+            stdoutIsTTY: true,
+            stderrIsTTY: true,
+            ptyAvailable: false,
+        }),
+        "pipe",
+    );
+});
 
 test("ensureBds does not leave a versioned server directory behind after an invalid archive response", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-bds-invalid-");

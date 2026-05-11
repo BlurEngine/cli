@@ -177,6 +177,7 @@ Flags:
 - `--bds-server-dir <path>`: override BDS server directory
 - `--world <worldName>`: override the active world for this run
 - `--restart-on-world-change [enabled]`: enable or disable full server restart when the project world source changes
+- `--compact-scripting-logs [enabled]`: enable or disable compacting extra blank lines after BDS scripting logs
 - `--debug [enabled]`: enable or disable debug logs for watch/build/sync/server lifecycle activity
 
 Examples:
@@ -190,6 +191,7 @@ blr dev --local-server true --watch-world true
 blr dev --local-server true --watch-allowlist true
 blr dev --local-server true --bds-version 1.26.0.2
 blr dev --local-server true --world "Creative Sandbox"
+blr dev --local-server true --compact-scripting-logs false
 blr dev --local-deploy true --minecraft-product Custom --minecraft-development-path D:/com.mojang
 blr dev --debug
 ```

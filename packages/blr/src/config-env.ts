@@ -45,6 +45,7 @@ const CONFIG_ENV_SPECS: ConfigEnvSpec[] = [
     { path: ["dev", "localServer", "worldName"], kind: "string" },
     { path: ["dev", "localServer", "worldSourcePath"], kind: "string" },
     { path: ["dev", "localServer", "restartOnWorldChange"], kind: "boolean" },
+    { path: ["dev", "localServer", "compactScriptingLogs"], kind: "boolean" },
     { path: ["dev", "localServer", "copy", "behaviorPack"], kind: "boolean" },
     { path: ["dev", "localServer", "copy", "resourcePack"], kind: "boolean" },
     { path: ["dev", "localServer", "attach", "behaviorPack"], kind: "boolean" },

@@ -239,6 +239,11 @@ async function main(): Promise<void> {
             parseOptionalBoolean,
         )
         .option(
+            "--compact-scripting-logs [enabled]",
+            "Enable or disable compacting extra blank lines after BDS scripting logs",
+            parseOptionalBoolean,
+        )
+        .option(
             "--debug [enabled]",
             "Enable or disable debug logs for dev lifecycle activity",
             parseOptionalBoolean,

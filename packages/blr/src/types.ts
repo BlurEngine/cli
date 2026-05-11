@@ -235,6 +235,10 @@ export interface BlurConfigLocalServerFile {
      */
     restartOnWorldChange?: boolean;
     /**
+     * Remove extra blank lines emitted after BDS scripting log entries.
+     */
+    compactScriptingLogs?: boolean;
+    /**
      * Pack copy defaults for local-server staging.
      */
     copy?: BlurConfigPackFeatureSelectionFile;
@@ -412,6 +416,7 @@ export interface BlurProject {
             worldName: string;
             worldSourcePath: string;
             restartOnWorldChange: boolean;
+            compactScriptingLogs: boolean;
             allowlist: string[];
             operators: string[];
             defaultPermissionLevel: PermissionLevel;

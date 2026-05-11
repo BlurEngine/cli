@@ -89,6 +89,59 @@ test("loadBlurConfig derives the default worldSourcePath from dev.localServer.wo
     assert.equal(config.features.resourcePack, false);
 });
 
+test("loadBlurConfig enables local-server scripting log compaction by default", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.dev.localServer.compactScriptingLogs, true);
+});
+
+test("loadBlurConfig respects configured local-server scripting log compaction", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        dev: {
+            localServer: {
+                compactScriptingLogs: false,
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.dev.localServer.compactScriptingLogs, false);
+});
+
+test("loadBlurConfig respects environment overrides for local-server scripting log compaction", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const previousCompactScriptingLogs =
+        process.env.BLR_DEV_LOCALSERVER_COMPACTSCRIPTINGLOGS;
+    process.env.BLR_DEV_LOCALSERVER_COMPACTSCRIPTINGLOGS = "false";
+    t.after(() => {
+        if (typeof previousCompactScriptingLogs === "undefined") {
+            delete process.env.BLR_DEV_LOCALSERVER_COMPACTSCRIPTINGLOGS;
+            return;
+        }
+        process.env.BLR_DEV_LOCALSERVER_COMPACTSCRIPTINGLOGS =
+            previousCompactScriptingLogs;
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.dev.localServer.compactScriptingLogs, false);
+});
+
 test("loadBlurConfig defaults dev.watch.paths to runtime and pack sources only", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-config-");
     await createMinimalProject(projectRoot, {

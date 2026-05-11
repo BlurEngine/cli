@@ -76,6 +76,7 @@ type DevCommandOptions = {
     bdsServerDir?: string;
     world?: string;
     restartOnWorldChange?: boolean;
+    compactScriptingLogs?: boolean;
     debug?: boolean;
 };
 
@@ -102,6 +103,7 @@ type DevResolvedOptions = {
     bdsCacheDir?: string;
     bdsServerDir?: string;
     restartOnWorldChange?: boolean;
+    compactScriptingLogs?: boolean;
     exitMessage?: string;
     exitIsError?: boolean;
     abortBeforeStart?: boolean;
@@ -1318,6 +1320,7 @@ function resolveNonInteractiveOptions(
         bdsCacheDir: options.bdsCacheDir,
         bdsServerDir: options.bdsServerDir,
         restartOnWorldChange: options.restartOnWorldChange,
+        compactScriptingLogs: options.compactScriptingLogs,
     };
 }
 
@@ -1443,6 +1446,7 @@ async function resolveDevOptions(
             bdsCacheDir: options.bdsCacheDir,
             bdsServerDir: options.bdsServerDir,
             restartOnWorldChange: options.restartOnWorldChange,
+            compactScriptingLogs: options.compactScriptingLogs,
             exitMessage,
             exitIsError,
         };
@@ -1616,6 +1620,7 @@ async function resolveDevOptions(
         bdsCacheDir: options.bdsCacheDir,
         bdsServerDir: options.bdsServerDir,
         restartOnWorldChange: options.restartOnWorldChange,
+        compactScriptingLogs: options.compactScriptingLogs,
         exitMessage,
         exitIsError,
     };
@@ -2031,6 +2036,9 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 restartOnWorldChange:
                     resolved.restartOnWorldChange ??
                     config.dev.localServer.restartOnWorldChange,
+                compactScriptingLogs:
+                    resolved.compactScriptingLogs ??
+                    config.dev.localServer.compactScriptingLogs,
                 projectWorldMode:
                     config.dev.localServer.worldSync.projectWorldMode,
                 runtimeWorldMode:
@@ -2059,6 +2067,9 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                   behaviorPack: resolved.attachBehaviorPack,
                   resourcePack: resolved.attachResourcePack,
               },
+              compactScriptingLogs:
+                  resolved.compactScriptingLogs ??
+                  config.dev.localServer.compactScriptingLogs,
               debug,
               reporter: localServerProgressReporter,
           })
