@@ -84,7 +84,27 @@ test("BdsScriptingLogCompactor removes ANSI-only blank lines after scripting log
         output,
         [
             "\u001B[33m[2026-05-11 21:03:17:525 WARN] [Scripting] [Fishing] catch player=SupaaaaaaHam\u001B[39m\r\n",
-            "[2026-05-11 21:03:17:525 INFO] [Scripting] spawn minecraft:item Spawned []\r\n",
+            "\u001B[39m[2026-05-11 21:03:17:525 INFO] [Scripting] spawn minecraft:item Spawned []\r\n",
+        ].join(""),
+    );
+});
+
+test("BdsScriptingLogCompactor preserves ANSI reset from suppressed blank lines", () => {
+    const compactor = new BdsScriptingLogCompactor();
+    const output =
+        compactor.write(
+            [
+                "\u001B[33m[2026-05-11 23:24:09:108 WARN] [Scripting] [Fishing] reel player=SupaaaaaaHam\r\n",
+                "\u001B[39m\r\n",
+                "[2026-05-11 23:24:09:108 INFO] [Scripting] after itemUse minecraft:fishing_rod SupaaaaaaHam\r\n",
+            ].join(""),
+        ) + compactor.end();
+
+    assert.equal(
+        output,
+        [
+            "\u001B[33m[2026-05-11 23:24:09:108 WARN] [Scripting] [Fishing] reel player=SupaaaaaaHam\r\n",
+            "\u001B[39m[2026-05-11 23:24:09:108 INFO] [Scripting] after itemUse minecraft:fishing_rod SupaaaaaaHam\r\n",
         ].join(""),
     );
 });

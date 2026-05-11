@@ -102,6 +102,10 @@ function stripAnsiSequences(value: string): string {
         .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
+function extractSgrSequences(value: string): string {
+    return value.match(/\u001B\[[0-?]*[ -/]*m/g)?.join("") ?? "";
+}
+
 export class BdsPtyOutputFilter {
     private pending = "";
     private beforeFirstPrintable = true;
@@ -264,7 +268,7 @@ export class BdsScriptingLogCompactor {
             this.suppressBlankAfterScripting &&
             stripAnsiSequences(content).trim().length === 0
         ) {
-            return "";
+            return extractSgrSequences(content);
         }
 
         this.suppressBlankAfterScripting = isBdsScriptingLogLine(content);
