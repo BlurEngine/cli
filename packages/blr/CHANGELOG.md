@@ -1,5 +1,11 @@
 # @blurengine/cli
 
+## 0.8.0
+
+### Minor Changes
+
+- [`6dbd086`](https://github.com/BlurEngine/cli/commit/6dbd0860332d4d0edf908b1f0c64d6ecaae5c908) Thanks [@SupaHam](https://github.com/SupaHam)! - Compact noisy BDS scripting logs during `blr dev` by default, with config, environment, and CLI overrides. The local-server output relay now preserves interactive terminal colors while removing extra blank lines and terminal control noise from scripting log output.
+
 ## 0.7.0
 
 ### Minor Changes
