@@ -376,10 +376,33 @@ test("buildRemoteWorldSyncFailureMessage replaces raw unknown backend errors wit
     );
 });
 
-test("resolveProjectWatchChangeAction reloads runtime changes, syncs pack changes, and ignores config changes", () => {
+test("resolveProjectWatchChangeAction reloads source changes, syncs pack changes, and ignores non-runtime changes", () => {
     assert.deepEqual(resolveProjectWatchChangeAction("src/main.ts"), {
         kind: "reload",
         pipelineMode: "reload",
+    });
+    assert.deepEqual(resolveProjectWatchChangeAction("src/main.js"), {
+        kind: "reload",
+        pipelineMode: "reload",
+    });
+    assert.deepEqual(resolveProjectWatchChangeAction("src/main.mjs"), {
+        kind: "reload",
+        pipelineMode: "reload",
+    });
+    assert.deepEqual(resolveProjectWatchChangeAction("src/main.test.ts"), {
+        kind: "ignore",
+        message:
+            "[dev] change ignored: src/main.test.ts. Test files do not trigger dev reloads.",
+    });
+    assert.deepEqual(resolveProjectWatchChangeAction("src/main.test.js"), {
+        kind: "ignore",
+        message:
+            "[dev] change ignored: src/main.test.js. Test files do not trigger dev reloads.",
+    });
+    assert.deepEqual(resolveProjectWatchChangeAction("src/main.test.mjs"), {
+        kind: "ignore",
+        message:
+            "[dev] change ignored: src/main.test.mjs. Test files do not trigger dev reloads.",
     });
     assert.deepEqual(
         resolveProjectWatchChangeAction(
@@ -409,8 +432,9 @@ test("resolveProjectWatchChangeAction reloads runtime changes, syncs pack change
         message: "[dev] change ignored: package.json. Restart dev to apply it.",
     });
     assert.deepEqual(resolveProjectWatchChangeAction("scripts/shared.ts"), {
-        kind: "reload",
-        pipelineMode: "reload",
+        kind: "ignore",
+        message:
+            "[dev] change ignored: scripts/shared.ts. Only files under src/ trigger dev reloads.",
     });
 });
 

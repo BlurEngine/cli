@@ -78,7 +78,8 @@ When watch mode is active:
 - `blr` prints `[dev] Watching for changes...` once any enabled watcher is ready
 - `watch-scripts` uses the configured project-relative glob-style watch paths
 - runtime source changes trigger a rebuild and local-server `reload`
-- behavior-pack and resource-pack changes trigger a rebuild and resync without sending `reload`
+- `.test.*` files do not trigger rebuilds or reloads
+- behavior-pack and resource-pack changes are not watched by default; if explicitly watched, they trigger a rebuild and resync without sending `reload`
 - `blr.config.json` and `package.json` are not watched by default; if you add them to `dev.watch.paths`, `blr` tells you to restart `dev` instead of reloading
 - `watch-allowlist` watches runtime BDS server-state files and copies them back into project state:
   `allowlist.json` -> `server/allowlist.json`

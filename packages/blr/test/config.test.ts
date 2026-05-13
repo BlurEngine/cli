@@ -142,7 +142,7 @@ test("loadBlurConfig respects environment overrides for local-server scripting l
     assert.equal(config.dev.localServer.compactScriptingLogs, false);
 });
 
-test("loadBlurConfig defaults dev.watch.paths to runtime and pack sources only", async (t) => {
+test("loadBlurConfig defaults dev.watch.paths to runtime source only", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-config-");
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
@@ -151,11 +151,7 @@ test("loadBlurConfig defaults dev.watch.paths to runtime and pack sources only",
     });
 
     const { config } = await loadBlurConfig(projectRoot);
-    assert.deepEqual(config.dev.watch.paths, [
-        "src/**/*",
-        "behavior_packs/**/*",
-        "resource_packs/**/*",
-    ]);
+    assert.deepEqual(config.dev.watch.paths, ["src/**/*"]);
 });
 
 test("loadBlurConfig accepts package.defaultTarget package formats", async (t) => {

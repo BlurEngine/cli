@@ -178,6 +178,11 @@ function normalizeWatchPath(targetPath: string): string {
     return normalized.startsWith("./") ? normalized.slice(2) : normalized;
 }
 
+function isTestFilePath(normalizedPath: string): boolean {
+    const fileName = normalizedPath.split("/").at(-1) ?? normalizedPath;
+    return fileName.includes(".test.");
+}
+
 export function mergePipelineModes(
     currentMode: PipelineMode | undefined,
     nextMode: PipelineMode,
@@ -213,6 +218,13 @@ export function resolveProjectWatchChangeAction(
         };
     }
 
+    if (isTestFilePath(normalizedPath)) {
+        return {
+            kind: "ignore",
+            message: `[dev] change ignored: ${normalizedPath}. Test files do not trigger dev reloads.`,
+        };
+    }
+
     if (
         normalizedPath === "behavior_packs" ||
         normalizedPath.startsWith("behavior_packs/") ||
@@ -222,6 +234,13 @@ export function resolveProjectWatchChangeAction(
         return {
             kind: "sync",
             pipelineMode: "start",
+        };
+    }
+
+    if (normalizedPath !== "src" && !normalizedPath.startsWith("src/")) {
+        return {
+            kind: "ignore",
+            message: `[dev] change ignored: ${normalizedPath}. Only files under src/ trigger dev reloads.`,
         };
     }
 

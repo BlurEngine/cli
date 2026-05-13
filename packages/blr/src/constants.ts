@@ -28,11 +28,7 @@ export const DEFAULT_EXTERNAL_MODULES = [
 
 export const DEFAULT_PROJECT_WORLDS_ROOT = "worlds";
 
-export const DEFAULT_WATCH_PATHS = [
-    "src/**/*",
-    "behavior_packs/**/*",
-    "resource_packs/**/*",
-];
+export const DEFAULT_WATCH_PATHS = ["src/**/*"];
 
 export const BASELINE_DEPENDENCIES = {
     "@minecraft/server": "^2.3.0",
