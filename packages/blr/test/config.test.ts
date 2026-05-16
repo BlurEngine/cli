@@ -155,7 +155,13 @@ test("loadBlurConfig defaults dev.watch.paths to runtime source only", async (t)
 });
 
 test("loadBlurConfig accepts package.defaultTarget package formats", async (t) => {
-    for (const target of ["mctemplate", "mcworld", "mcaddon"]) {
+    for (const target of [
+        "mctemplate",
+        "mcworld",
+        "mcaddon",
+        "behavior-pack",
+        "resource-pack",
+    ]) {
         const projectRoot = await createTempDirectory(t, "blr-config-");
         await createMinimalProject(projectRoot, {
             schemaVersion: 1,
@@ -169,6 +175,49 @@ test("loadBlurConfig accepts package.defaultTarget package formats", async (t) =
         const { config } = await loadBlurConfig(projectRoot);
         assert.equal(config.package.defaultTarget, target);
     }
+});
+
+test("loadBlurConfig accepts package.defaultTargets package formats", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        package: {
+            defaultTargets: ["behavior-pack", "resource-pack"],
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.package.defaultTargets, [
+        "behavior-pack",
+        "resource-pack",
+    ]);
+});
+
+test("loadBlurConfig respects environment overrides for package defaultTargets", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const previousDefaultTargets = process.env.BLR_PACKAGE_DEFAULTTARGETS;
+    process.env.BLR_PACKAGE_DEFAULTTARGETS = "behavior-pack,resource-pack";
+    t.after(() => {
+        if (typeof previousDefaultTargets === "undefined") {
+            delete process.env.BLR_PACKAGE_DEFAULTTARGETS;
+            return;
+        }
+        process.env.BLR_PACKAGE_DEFAULTTARGETS = previousDefaultTargets;
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.package.defaultTargets, [
+        "behavior-pack",
+        "resource-pack",
+    ]);
 });
 
 test("loadBlurConfig preserves the authored pack minEngineVersion", async (t) => {

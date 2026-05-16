@@ -6,6 +6,8 @@ export const SUPPORTED_PACKAGE_TARGETS = [
     "mctemplate",
     "mcworld",
     "mcaddon",
+    "behavior-pack",
+    "resource-pack",
 ] as const satisfies readonly PackageTarget[];
 
 export const PACKAGE_TARGETS_REQUIRING_WORLD = [

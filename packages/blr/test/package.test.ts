@@ -51,6 +51,7 @@ async function createPackageProject(
     options: {
         world?: boolean;
         defaultTarget?: string;
+        packageConfig?: Record<string, unknown>;
     } = {},
 ): Promise<void> {
     await mkdir(path.join(projectRoot, "behavior_packs", "game"), {
@@ -79,13 +80,17 @@ async function createPackageProject(
         minecraft: {
             targetVersion: "1.26.11.1",
         },
-        ...(options.defaultTarget
+        ...(options.packageConfig
             ? {
-                  package: {
-                      defaultTarget: options.defaultTarget,
-                  },
+                  package: options.packageConfig,
               }
-            : {}),
+            : options.defaultTarget
+              ? {
+                    package: {
+                        defaultTarget: options.defaultTarget,
+                    },
+                }
+              : {}),
     });
 
     if (options.world ?? true) {
@@ -98,7 +103,7 @@ async function createPackageProject(
 
 async function runPackageForTest(
     projectRoot: string,
-    target?: string,
+    target?: string | string[],
 ): Promise<void> {
     const previousCwd = process.cwd();
     const previousLog = console.log;
@@ -172,7 +177,7 @@ test("runPackageCommand rejects the legacy world-template target", async (t) => 
 
     await assert.rejects(
         () => runPackageForTest(projectRoot, "world-template"),
-        /Unsupported package target "world-template"\. Supported targets: mctemplate, mcworld, mcaddon\./,
+        /Unsupported package target "world-template"\. Supported targets: mctemplate, mcworld, mcaddon, behavior-pack, resource-pack\./,
     );
 });
 
@@ -194,4 +199,66 @@ test("runPackageCommand creates mcaddon archives without requiring a world sourc
     assert.equal(entries.includes("db/CURRENT"), false);
     assert.equal(entries.includes("world_behavior_packs.json"), false);
     assert.equal(entries.includes("world_resource_packs.json"), false);
+});
+
+test("runPackageCommand creates configured standalone pack outputs when target is omitted", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, {
+        world: false,
+        packageConfig: {
+            defaultTargets: ["behavior-pack", "resource-pack"],
+        },
+    });
+
+    await runPackageForTest(projectRoot);
+
+    const behaviorOutputFile = path.join(
+        projectRoot,
+        "dist",
+        "packages",
+        "game-behavior.mcpack",
+    );
+    const resourceOutputFile = path.join(
+        projectRoot,
+        "dist",
+        "packages",
+        "assets-resource.mcpack",
+    );
+    const behaviorEntries = readZipEntryNames(behaviorOutputFile);
+    const resourceEntries = readZipEntryNames(resourceOutputFile);
+    assert.ok(behaviorEntries.includes("manifest.json"));
+    assert.ok(resourceEntries.includes("manifest.json"));
+    assert.equal(
+        behaviorEntries.includes("behavior_packs/game/manifest.json"),
+        false,
+    );
+    assert.equal(
+        resourceEntries.includes("resource_packs/assets/manifest.json"),
+        false,
+    );
+});
+
+test("runPackageCommand accepts multiple explicit package targets", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, { world: false });
+
+    await runPackageForTest(projectRoot, ["behavior-pack", "resource-pack"]);
+
+    assert.deepEqual(
+        readZipEntryNames(
+            path.join(projectRoot, "dist", "packages", "game-behavior.mcpack"),
+        ),
+        ["manifest.json"],
+    );
+    assert.deepEqual(
+        readZipEntryNames(
+            path.join(
+                projectRoot,
+                "dist",
+                "packages",
+                "assets-resource.mcpack",
+            ),
+        ),
+        ["manifest.json"],
+    );
 });

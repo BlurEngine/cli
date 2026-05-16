@@ -121,6 +121,19 @@ function ensurePackageTarget(value: unknown): PackageTarget | undefined {
     return isPackageTarget(value) ? value : undefined;
 }
 
+function ensurePackageTargets(value: unknown): PackageTarget[] | undefined {
+    if (!Array.isArray(value)) {
+        return undefined;
+    }
+
+    const targets = value.filter((entry): entry is PackageTarget =>
+        isPackageTarget(entry),
+    );
+    return targets.length > 0
+        ? (dedupeStrings(targets) as PackageTarget[])
+        : undefined;
+}
+
 function ensureMinecraftChannel(
     value: unknown,
     fallback: MinecraftChannel,
@@ -271,6 +284,7 @@ function coerceBlurConfigFile(
         },
         package: {
             defaultTarget: ensurePackageTarget(packageConfig.defaultTarget),
+            defaultTargets: ensurePackageTargets(packageConfig.defaultTargets),
             worldTemplate: {
                 include: {
                     behaviorPack:
@@ -782,6 +796,9 @@ export async function loadBlurConfig(
         package: {
             defaultTarget: ensurePackageTarget(
                 configFile.package?.defaultTarget,
+            ),
+            defaultTargets: ensurePackageTargets(
+                configFile.package?.defaultTargets,
             ),
         },
     };

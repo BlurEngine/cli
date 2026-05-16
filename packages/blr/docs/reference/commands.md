@@ -235,7 +235,7 @@ Produces distributable project artifacts from the staged build output.
 Syntax:
 
 ```text
-blr package [target]
+blr package [targets...]
 ```
 
 Currently supported targets:
@@ -243,6 +243,8 @@ Currently supported targets:
 - `mctemplate`
 - `mcworld`
 - `mcaddon`
+- `behavior-pack`
+- `resource-pack`
 
 `mctemplate` behavior:
 
@@ -272,17 +274,35 @@ Currently supported targets:
 - writes `dist/packages/<packName>.mcaddon`
 - does not require a project world source
 
+`behavior-pack` behavior:
+
+- runs `build` first
+- copies the staged behavior pack into a package workspace
+- writes `dist/packages/<behaviorPackName>-behavior.mcpack`
+- does not require a project world source
+- fails if the project has no staged behavior pack
+
+`resource-pack` behavior:
+
+- runs `build` first
+- copies the staged resource pack into a package workspace
+- writes `dist/packages/<resourcePackName>-resource.mcpack`
+- does not require a project world source
+- fails if the project has no staged resource pack
+
 Target resolution:
 
-- if `<target>` is omitted, `blr` resolves the target from `blr.config.json -> package.defaultTarget`
-- if `<target>` is omitted and no config default exists, `blr` uses `mctemplate`
+- if one or more `<targets>` are passed, `blr` packages those targets in order
+- if `<targets>` are omitted, `blr` resolves targets from `blr.config.json -> package.defaultTargets`
+- if `<targets>` are omitted and `package.defaultTargets` is not set, `blr` resolves a single target from `package.defaultTarget`
+- if `<targets>` are omitted and no config default exists, `blr` uses `mctemplate`
 
 Flags:
 
 - `--production [enabled]`: enable or disable production bundling before packaging
 - `--world <worldName>`: override the active world for this packaging run
-- `--include-behavior-pack [enabled]`: enable or disable behavior-pack inclusion for this run
-- `--include-resource-pack [enabled]`: enable or disable resource-pack inclusion for this run
+- `--include-behavior-pack [enabled]`: enable or disable behavior-pack inclusion for package targets that embed staged packs
+- `--include-resource-pack [enabled]`: enable or disable resource-pack inclusion for package targets that embed staged packs
 - `--debug [enabled]`: enable or disable debug logs for packaging activity
 
 Examples:
@@ -292,6 +312,7 @@ blr package
 blr package mctemplate
 blr package mcworld
 blr package mcaddon
+blr package behavior-pack resource-pack
 blr package --world "Creative Sandbox"
 blr package mctemplate --production
 blr package mcworld --debug

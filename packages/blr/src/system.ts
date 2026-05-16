@@ -872,18 +872,25 @@ export async function collectSystemDoctorReport(
         });
     }
 
+    const configuredDefaultPackageTargets = config.package.defaultTargets
+        ?.length
+        ? config.package.defaultTargets
+        : config.package.defaultTarget
+          ? [config.package.defaultTarget]
+          : [];
     if (
-        config.package.defaultTarget &&
-        (PACKAGE_TARGETS_REQUIRING_WORLD as readonly PackageTarget[]).includes(
-            config.package.defaultTarget,
+        configuredDefaultPackageTargets.some((target) =>
+            (
+                PACKAGE_TARGETS_REQUIRING_WORLD as readonly PackageTarget[]
+            ).includes(target),
         ) &&
         !worldStatus.local.valid
     ) {
         checks.push({
-            id: "package.defaultTarget",
+            id: "package.defaultTargets",
             status: "warn",
             summary:
-                "The configured default packaging target requires a valid local world source.",
+                "A configured default packaging target requires a valid local world source.",
             detail: "Packaging will fail until the active world source contains a Bedrock world with a db/ directory.",
         });
     }

@@ -41,12 +41,15 @@ type PackageCommandOptions = {
     debug?: boolean;
 };
 
+type StandalonePackKind = "behavior" | "resource";
+
 type PackageTargetDefinition = {
     workspaceDirectoryName: string;
-    outputExtension: "mctemplate" | "mcworld" | "mcaddon";
+    outputExtension: "mctemplate" | "mcworld" | "mcaddon" | "mcpack";
     archiveRoot?: string;
     includeWorld: boolean;
     writeWorldTemplateManifest: boolean;
+    standalonePack?: StandalonePackKind;
 };
 
 const PACKAGE_TARGET_DEFINITIONS: Record<
@@ -71,6 +74,20 @@ const PACKAGE_TARGET_DEFINITIONS: Record<
         outputExtension: "mcaddon",
         includeWorld: false,
         writeWorldTemplateManifest: false,
+    },
+    "behavior-pack": {
+        workspaceDirectoryName: "behavior_pack",
+        outputExtension: "mcpack",
+        includeWorld: false,
+        writeWorldTemplateManifest: false,
+        standalonePack: "behavior",
+    },
+    "resource-pack": {
+        workspaceDirectoryName: "resource_pack",
+        outputExtension: "mcpack",
+        includeWorld: false,
+        writeWorldTemplateManifest: false,
+        standalonePack: "resource",
     },
 };
 
@@ -175,6 +192,13 @@ function createPackageOutputBaseName(
     }
 
     return `${config.project.packName}-${worldName.replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-")}`;
+}
+
+function createStandalonePackOutputBaseName(
+    packName: string,
+    packKind: StandalonePackKind,
+): string {
+    return `${packName}-${packKind}`;
 }
 
 async function copySelectedProjectPacks(
@@ -310,11 +334,22 @@ async function packageProjectTarget(
         artifacts.packagesRoot,
         targetDefinition.workspaceDirectoryName,
     );
-    const outputBaseName = createPackageOutputBaseName(
-        config,
-        worldName,
-        targetDefinition.includeWorld,
-    );
+    const standalonePackName =
+        targetDefinition.standalonePack === "behavior"
+            ? artifacts.behaviorPackName
+            : targetDefinition.standalonePack === "resource"
+              ? artifacts.resourcePackName
+              : undefined;
+    const outputBaseName = targetDefinition.standalonePack
+        ? createStandalonePackOutputBaseName(
+              standalonePackName ?? config.project.packName,
+              targetDefinition.standalonePack,
+          )
+        : createPackageOutputBaseName(
+              config,
+              worldName,
+              targetDefinition.includeWorld,
+          );
     const outputFile = path.join(
         artifacts.packagesRoot,
         `${outputBaseName}.${targetDefinition.outputExtension}`,
@@ -322,29 +357,45 @@ async function packageProjectTarget(
 
     await removeDirectory(workspaceRoot);
     await ensureDirectory(artifacts.packagesRoot);
-    if (targetDefinition.includeWorld) {
-        await copyDirectory(
-            resolveProjectWorldSourceDirectory(projectRoot, worldSourcePath),
-            workspaceRoot,
-        );
+    if (targetDefinition.standalonePack) {
+        const packSource =
+            targetDefinition.standalonePack === "behavior"
+                ? artifacts.stageBehaviorPackDirectory
+                : artifacts.stageResourcePackDirectory;
+        if (!packSource || !standalonePackName) {
+            throw new Error(
+                `Cannot package ${target} because no staged ${targetDefinition.standalonePack} pack is available.`,
+            );
+        }
+        await copyDirectory(packSource, workspaceRoot);
     } else {
-        await ensureDirectory(workspaceRoot);
-    }
+        if (targetDefinition.includeWorld) {
+            await copyDirectory(
+                resolveProjectWorldSourceDirectory(
+                    projectRoot,
+                    worldSourcePath,
+                ),
+                workspaceRoot,
+            );
+        } else {
+            await ensureDirectory(workspaceRoot);
+        }
 
-    const copiedPacks = await copySelectedProjectPacks(
-        artifacts,
-        workspaceRoot,
-        includeSelection,
-    );
-
-    if (
-        target === "mcaddon" &&
-        !copiedPacks.behaviorPackIncluded &&
-        !copiedPacks.resourcePackIncluded
-    ) {
-        throw new Error(
-            "Cannot package mcaddon because no staged packs are selected for inclusion.",
+        const copiedPacks = await copySelectedProjectPacks(
+            artifacts,
+            workspaceRoot,
+            includeSelection,
         );
+
+        if (
+            target === "mcaddon" &&
+            !copiedPacks.behaviorPackIncluded &&
+            !copiedPacks.resourcePackIncluded
+        ) {
+            throw new Error(
+                "Cannot package mcaddon because no staged packs are selected for inclusion.",
+            );
+        }
     }
 
     await removeFilesNamed(workspaceRoot, ".gitkeep");
@@ -371,8 +422,64 @@ async function packageProjectTarget(
     };
 }
 
+function normalizeRequestedPackageTargets(
+    requestedTargets: string | string[] | undefined,
+): string[] {
+    if (Array.isArray(requestedTargets)) {
+        return requestedTargets
+            .map((target) => target.trim())
+            .filter((target) => target.length > 0);
+    }
+    const requestedTarget = requestedTargets?.trim() ?? "";
+    return requestedTarget.length > 0 ? [requestedTarget] : [];
+}
+
+function parsePackageTargets(values: string[]): PackageTarget[] {
+    const targets: PackageTarget[] = [];
+    const seen = new Set<PackageTarget>();
+
+    for (const value of values) {
+        if (!isPackageTarget(value)) {
+            throw new Error(
+                `Unsupported package target "${value}". Supported targets: ${formatSupportedPackageTargets()}.`,
+            );
+        }
+
+        if (!seen.has(value)) {
+            targets.push(value);
+            seen.add(value);
+        }
+    }
+
+    return targets;
+}
+
+function resolvePackageTargets(
+    requestedTargets: string | string[] | undefined,
+    config: BlurProject,
+): PackageTarget[] {
+    const normalizedRequestedTargets =
+        normalizeRequestedPackageTargets(requestedTargets);
+    if (normalizedRequestedTargets.length > 0) {
+        return parsePackageTargets(normalizedRequestedTargets);
+    }
+    if (config.package.defaultTargets?.length) {
+        return config.package.defaultTargets;
+    }
+    if (config.package.defaultTarget) {
+        return [config.package.defaultTarget];
+    }
+    return [DEFAULT_PACKAGE_TARGET];
+}
+
+function packageTargetRequiresWorld(target: PackageTarget): boolean {
+    return (
+        PACKAGE_TARGETS_REQUIRING_WORLD as readonly PackageTarget[]
+    ).includes(target);
+}
+
 export async function runPackageCommand(
-    requestedTarget: string | undefined,
+    requestedTargets: string | string[] | undefined,
     options: PackageCommandOptions,
 ): Promise<void> {
     const { projectRoot, config } = await loadBlurConfig(process.cwd());
@@ -386,37 +493,25 @@ export async function runPackageCommand(
             resourcePack: options.includeResourcePack,
         },
     );
-    const target =
-        requestedTarget ??
-        config.package.defaultTarget ??
-        DEFAULT_PACKAGE_TARGET;
-
-    if (!isPackageTarget(target)) {
-        throw new Error(
-            `Unsupported package target "${target}". Supported targets: ${formatSupportedPackageTargets()}.`,
-        );
-    }
+    const targets = resolvePackageTargets(requestedTargets, config);
 
     debug.log("package", "resolved package command", {
         projectRoot,
-        target,
+        targets,
         production,
         selectedWorld,
         includeSelection,
-        requestedTarget: requestedTarget ?? null,
+        requestedTargets: requestedTargets ?? null,
         defaultTarget: config.package.defaultTarget ?? null,
+        defaultTargets: config.package.defaultTargets ?? null,
     });
 
-    if (
-        (PACKAGE_TARGETS_REQUIRING_WORLD as readonly PackageTarget[]).includes(
-            target,
-        )
-    ) {
+    if (targets.some((target) => packageTargetRequiresWorld(target))) {
         try {
             await assertValidProjectWorldSource(
                 projectRoot,
                 selectedWorld.worldSourcePath,
-                `package ${target}`,
+                `package ${targets.join(", ")}`,
             );
         } catch (error) {
             const message =
@@ -429,15 +524,17 @@ export async function runPackageCommand(
 
     await buildProject(projectRoot, config, { production, debug });
 
-    const packaged = await packageProjectTarget(
-        target,
-        projectRoot,
-        config,
-        selectedWorld.worldName,
-        selectedWorld.worldSourcePath,
-        includeSelection,
-    );
-    console.log(
-        `[package] Created ${path.relative(projectRoot, packaged.outputFile)} from ${path.relative(projectRoot, packaged.workspaceRoot)}`,
-    );
+    for (const target of targets) {
+        const packaged = await packageProjectTarget(
+            target,
+            projectRoot,
+            config,
+            selectedWorld.worldName,
+            selectedWorld.worldSourcePath,
+            includeSelection,
+        );
+        console.log(
+            `[package] Created ${path.relative(projectRoot, packaged.outputFile)} from ${path.relative(projectRoot, packaged.workspaceRoot)}`,
+        );
+    }
 }

@@ -233,6 +233,7 @@ Optional project-level packaging defaults.
 Fields:
 
 - `defaultTarget`: default package target used when `blr package` is run without a target
+- `defaultTargets`: default package targets used when `blr package` is run without targets
 - `worldTemplate.include.behaviorPack`: include the behavior pack in package targets that embed staged packs
 - `worldTemplate.include.resourcePack`: include the resource pack in package targets that embed staged packs
 
@@ -241,15 +242,19 @@ Supported values:
 - `mctemplate`
 - `mcworld`
 - `mcaddon`
+- `behavior-pack`
+- `resource-pack`
 
 Behavior:
 
-- if `blr package <target>` is passed explicitly, that wins
-- if the target is omitted, `blr` uses `package.defaultTarget` when present
-- if the target is omitted and no config default exists, `blr` uses `mctemplate`
+- if `blr package <targets...>` is passed explicitly, those targets win
+- if targets are omitted, `blr` uses `package.defaultTargets` when present
+- if targets are omitted and `package.defaultTargets` is not set, `blr` uses `package.defaultTarget` when present
+- if targets are omitted and no config default exists, `blr` uses `mctemplate`
 - `worldTemplate.include.*` defaults follow project feature presence for `mctemplate`, `mcworld`, and `mcaddon`:
   - behavior pack present -> behavior pack included by default
   - resource pack present -> resource pack included by default
+- `behavior-pack` and `resource-pack` produce standalone `.mcpack` files and ignore `worldTemplate.include.*`
 - these defaults can be narrowed per run with:
   - `--include-behavior-pack`
   - `--include-resource-pack`
@@ -458,6 +463,7 @@ Config-backed overrides:
   - `package.worldTemplate.include.behaviorPack` -> `BLR_PACKAGE_WORLDTEMPLATE_INCLUDE_BEHAVIORPACK`
   - `world.s3.keyPrefix` -> `BLR_WORLD_S3_KEYPREFIX`
   - `package.defaultTarget` -> `BLR_PACKAGE_DEFAULTTARGET`
+  - `package.defaultTargets` -> `BLR_PACKAGE_DEFAULTTARGETS`
 - array fields accept comma-separated or newline-separated values
 - invalid boolean or numeric env values fail fast instead of silently falling back
 

@@ -18,7 +18,12 @@ export type MinecraftProduct =
 export type BdsPlatform = "win" | "linux";
 
 export type PermissionLevel = "visitor" | "member" | "operator" | "custom";
-export type PackageTarget = "mctemplate" | "mcworld" | "mcaddon";
+export type PackageTarget =
+    | "mctemplate"
+    | "mcworld"
+    | "mcaddon"
+    | "behavior-pack"
+    | "resource-pack";
 
 /**
  * Per-pack feature toggles for behavior-pack and resource-pack automation.
@@ -128,6 +133,10 @@ export interface BlurConfigPackageFile {
      * Default package target used when `blr package` is run without an explicit target.
      */
     defaultTarget?: PackageTarget;
+    /**
+     * Default package targets used when `blr package` is run without explicit targets.
+     */
+    defaultTargets?: PackageTarget[];
     /**
      * Pack inclusion defaults for packaging targets that embed project packs.
      */
@@ -445,6 +454,7 @@ export interface BlurProject {
     };
     package: {
         defaultTarget?: PackageTarget;
+        defaultTargets?: PackageTarget[];
     };
 }
 

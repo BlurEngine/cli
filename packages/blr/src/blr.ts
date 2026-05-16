@@ -296,8 +296,8 @@ async function main(): Promise<void> {
         .command("package")
         .description("Produce distributable project artifacts.")
         .argument(
-            "[target]",
-            `Packaging target. Supported: ${formatSupportedPackageTargets()}`,
+            "[targets...]",
+            `Packaging targets. Supported: ${formatSupportedPackageTargets()}`,
         )
         .option(
             "--production [enabled]",
@@ -323,8 +323,8 @@ async function main(): Promise<void> {
             "Enable or disable debug logs for packaging activity",
             parseOptionalBoolean,
         )
-        .action(async (target: string, opts: Record<string, unknown>) => {
-            await runPackageCommand(target, opts as any);
+        .action(async (targets: string[], opts: Record<string, unknown>) => {
+            await runPackageCommand(targets, opts as any);
         });
 
     const minecraft = program

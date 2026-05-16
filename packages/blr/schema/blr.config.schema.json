@@ -145,6 +145,13 @@
           "$ref": "#/definitions/PackageTarget",
           "description": "Default package target used when `blr package` is run without an explicit target."
         },
+        "defaultTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PackageTarget"
+          },
+          "description": "Default package targets used when `blr package` is run without explicit targets."
+        },
         "worldTemplate": {
           "$ref": "#/definitions/BlurConfigPackageWorldTemplateFile",
           "description": "Pack inclusion defaults for packaging targets that embed project packs."
@@ -155,7 +162,13 @@
     },
     "PackageTarget": {
       "type": "string",
-      "enum": ["mctemplate", "mcworld", "mcaddon"]
+      "enum": [
+        "mctemplate",
+        "mcworld",
+        "mcaddon",
+        "behavior-pack",
+        "resource-pack"
+      ]
     },
     "BlurConfigPackageWorldTemplateFile": {
       "type": "object",
