@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { copyFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import AdmZip from "adm-zip";
 import { resolvePackFeatureSelection } from "../content.js";
@@ -7,6 +8,7 @@ import { createDebugLogger, resolveDebugEnabled } from "../debug.js";
 import {
     copyDirectory,
     ensureDirectory,
+    ensureParentDirectory,
     exists,
     readJson,
     removeDirectory,
@@ -25,23 +27,36 @@ import {
     resolveBuildArtifacts,
     type ResolvedBuildArtifacts,
 } from "../runtime.js";
-import type { BlurProject, PackageTarget, VersionTuple } from "../types.js";
+import { writeTarGzipFromDirectory } from "../tar-gzip.js";
+import type {
+    BlurProject,
+    PackageTarget,
+    VersionTuple,
+    WorldPackageFormat,
+} from "../types.js";
 import {
     appendWorldSourceHint,
     assertValidProjectWorldSource,
     resolveSelectedWorld,
     resolveProjectWorldSourceDirectory,
 } from "../world.js";
+import {
+    DEFAULT_WORLD_PACKAGE_FORMAT,
+    formatSupportedWorldPackageFormats,
+    isWorldPackageFormat,
+} from "../world-package-formats.js";
 
 type PackageCommandOptions = {
     production?: boolean;
     world?: string;
+    worldFormat?: string;
     includeBehaviorPack?: boolean;
     includeResourcePack?: boolean;
     debug?: boolean;
 };
 
 type StandalonePackKind = "behavior" | "resource";
+type WorkspacePackageTarget = Exclude<PackageTarget, "world">;
 
 type PackageTargetDefinition = {
     workspaceDirectoryName: string;
@@ -53,7 +68,7 @@ type PackageTargetDefinition = {
 };
 
 const PACKAGE_TARGET_DEFINITIONS: Record<
-    PackageTarget,
+    WorkspacePackageTarget,
     PackageTargetDefinition
 > = {
     mctemplate: {
@@ -201,6 +216,157 @@ function createStandalonePackOutputBaseName(
     return `${packName}-${packKind}`;
 }
 
+function createWorldPackageOutputBaseName(worldName: string): string {
+    return `${worldName.replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-")}-world`;
+}
+
+function resolveWorldPackageFormat(
+    requestedFormat: string | undefined,
+    config: BlurProject,
+): WorldPackageFormat {
+    const normalizedRequestedFormat = requestedFormat?.trim();
+    if (normalizedRequestedFormat) {
+        if (isWorldPackageFormat(normalizedRequestedFormat)) {
+            return normalizedRequestedFormat;
+        }
+
+        throw new Error(
+            `Unsupported world package format "${normalizedRequestedFormat}". Supported formats: ${formatSupportedWorldPackageFormats()}.`,
+        );
+    }
+
+    return config.package.world.format ?? DEFAULT_WORLD_PACKAGE_FORMAT;
+}
+
+const WORLD_PACKAGE_IGNORED_FILE_NAMES = new Set([
+    ".ds_store",
+    ".gitkeep",
+    "thumbs.db",
+]);
+
+const WORLD_PACKAGE_IGNORED_DIRECTORY_NAMES = new Set([
+    ".world_backup",
+    ".world_backups",
+    "backup",
+    "backups",
+    "world_backup",
+    "world_backups",
+    "worlds_backup",
+    "worlds_backups",
+]);
+
+function isTimestampedWorldBackupDirectory(entryName: string): boolean {
+    return /\.\d{8}T\d{6}Z(?:-\d+)?$/i.test(entryName);
+}
+
+function shouldSkipWorldPackageEntry(
+    entryName: string,
+    isDirectory: boolean,
+): boolean {
+    const normalized = entryName.toLowerCase();
+    if (WORLD_PACKAGE_IGNORED_FILE_NAMES.has(normalized)) {
+        return true;
+    }
+    if (normalized.includes(".blr-backup-")) {
+        return true;
+    }
+    if (
+        isDirectory &&
+        (WORLD_PACKAGE_IGNORED_DIRECTORY_NAMES.has(normalized) ||
+            isTimestampedWorldBackupDirectory(entryName))
+    ) {
+        return true;
+    }
+    return normalized.endsWith(".bak") || normalized.endsWith(".tmp");
+}
+
+async function copyRawWorldPackageDirectory(
+    sourcePath: string,
+    destinationPath: string,
+): Promise<void> {
+    await ensureDirectory(destinationPath);
+
+    const entries = await readdir(sourcePath, { withFileTypes: true });
+    for (const entry of entries) {
+        if (shouldSkipWorldPackageEntry(entry.name, entry.isDirectory())) {
+            continue;
+        }
+
+        const sourceEntryPath = path.join(sourcePath, entry.name);
+        const destinationEntryPath = path.join(destinationPath, entry.name);
+
+        if (entry.isDirectory()) {
+            await copyRawWorldPackageDirectory(
+                sourceEntryPath,
+                destinationEntryPath,
+            );
+            continue;
+        }
+
+        const entryStat = await stat(sourceEntryPath);
+        if (entryStat.isDirectory()) {
+            await copyRawWorldPackageDirectory(
+                sourceEntryPath,
+                destinationEntryPath,
+            );
+            continue;
+        }
+
+        if (entryStat.isFile()) {
+            await ensureParentDirectory(destinationEntryPath);
+            await copyFile(sourceEntryPath, destinationEntryPath);
+        }
+    }
+}
+
+async function writeWorldPackageArchive(
+    workspaceRoot: string,
+    outputFile: string,
+    format: WorldPackageFormat,
+): Promise<void> {
+    if (format === "tar.gz") {
+        await writeTarGzipFromDirectory(workspaceRoot, outputFile);
+        return;
+    }
+
+    const archive = new AdmZip();
+    archive.addLocalFolder(workspaceRoot);
+    await ensureParentDirectory(outputFile);
+    archive.writeZip(outputFile);
+}
+
+async function packageRawWorldTarget(
+    projectRoot: string,
+    config: BlurProject,
+    worldName: string,
+    worldSourcePath: string,
+    format: WorldPackageFormat,
+): Promise<{
+    workspaceRoot: string;
+    outputFile: string;
+}> {
+    const artifacts = resolveBuildArtifacts(projectRoot, config);
+    const workspaceRoot = path.join(artifacts.packagesRoot, "world");
+    const outputFile = path.join(
+        artifacts.packagesRoot,
+        `${createWorldPackageOutputBaseName(worldName)}.${format}`,
+    );
+
+    await removeDirectory(workspaceRoot);
+    await ensureDirectory(artifacts.packagesRoot);
+    await copyRawWorldPackageDirectory(
+        resolveProjectWorldSourceDirectory(projectRoot, worldSourcePath),
+        workspaceRoot,
+    );
+    await removeDirectory(outputFile);
+    await writeWorldPackageArchive(workspaceRoot, outputFile, format);
+
+    return {
+        workspaceRoot,
+        outputFile,
+    };
+}
+
 async function copySelectedProjectPacks(
     artifacts: ResolvedBuildArtifacts,
     workspaceRoot: string,
@@ -315,7 +481,7 @@ function addWorkspaceToArchive(
 }
 
 async function packageProjectTarget(
-    target: PackageTarget,
+    target: WorkspacePackageTarget,
     projectRoot: string,
     config: BlurProject,
     worldName: string,
@@ -494,10 +660,15 @@ export async function runPackageCommand(
         },
     );
     const targets = resolvePackageTargets(requestedTargets, config);
+    const worldPackageFormat = resolveWorldPackageFormat(
+        options.worldFormat,
+        config,
+    );
 
     debug.log("package", "resolved package command", {
         projectRoot,
         targets,
+        worldPackageFormat,
         production,
         selectedWorld,
         includeSelection,
@@ -525,14 +696,23 @@ export async function runPackageCommand(
     await buildProject(projectRoot, config, { production, debug });
 
     for (const target of targets) {
-        const packaged = await packageProjectTarget(
-            target,
-            projectRoot,
-            config,
-            selectedWorld.worldName,
-            selectedWorld.worldSourcePath,
-            includeSelection,
-        );
+        const packaged =
+            target === "world"
+                ? await packageRawWorldTarget(
+                      projectRoot,
+                      config,
+                      selectedWorld.worldName,
+                      selectedWorld.worldSourcePath,
+                      worldPackageFormat,
+                  )
+                : await packageProjectTarget(
+                      target,
+                      projectRoot,
+                      config,
+                      selectedWorld.worldName,
+                      selectedWorld.worldSourcePath,
+                      includeSelection,
+                  );
         console.log(
             `[package] Created ${path.relative(projectRoot, packaged.outputFile)} from ${path.relative(projectRoot, packaged.workspaceRoot)}`,
         );

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
 import { runPackageCommand } from "../src/commands/package.js";
 import { createTempDirectory, writeJsonFile } from "./helpers.js";
@@ -104,13 +105,14 @@ async function createPackageProject(
 async function runPackageForTest(
     projectRoot: string,
     target?: string | string[],
+    options: Parameters<typeof runPackageCommand>[1] = {},
 ): Promise<void> {
     const previousCwd = process.cwd();
     const previousLog = console.log;
     process.chdir(projectRoot);
     console.log = () => {};
     try {
-        await runPackageCommand(target, {});
+        await runPackageCommand(target, options);
     } finally {
         console.log = previousLog;
         process.chdir(previousCwd);
@@ -122,6 +124,34 @@ function readZipEntryNames(archivePath: string): string[] {
         .getEntries()
         .map((entry) => entry.entryName)
         .sort();
+}
+
+async function readTarGzEntryNames(archivePath: string): Promise<string[]> {
+    const buffer = gunzipSync(await readFile(archivePath));
+    const entries: string[] = [];
+    let offset = 0;
+
+    while (offset + 512 <= buffer.length) {
+        const nameBytes = buffer.subarray(offset, offset + 100);
+        const nameEnd = nameBytes.indexOf(0);
+        const name = nameBytes
+            .subarray(0, nameEnd === -1 ? undefined : nameEnd)
+            .toString("utf8");
+        if (name.length === 0) {
+            break;
+        }
+
+        const sizeRaw = buffer
+            .subarray(offset + 124, offset + 136)
+            .toString("ascii")
+            .replace(/\0.*$/, "")
+            .trim();
+        const size = Number.parseInt(sizeRaw || "0", 8);
+        entries.push(name);
+        offset += 512 + Math.ceil(size / 512) * 512;
+    }
+
+    return entries.sort();
 }
 
 test("runPackageCommand defaults to mctemplate output when target is omitted", async (t) => {
@@ -177,7 +207,7 @@ test("runPackageCommand rejects the legacy world-template target", async (t) => 
 
     await assert.rejects(
         () => runPackageForTest(projectRoot, "world-template"),
-        /Unsupported package target "world-template"\. Supported targets: mctemplate, mcworld, mcaddon, behavior-pack, resource-pack\./,
+        /Unsupported package target "world-template"\. Supported targets: mctemplate, mcworld, mcaddon, behavior-pack, resource-pack, world\./,
     );
 });
 
@@ -261,4 +291,171 @@ test("runPackageCommand accepts multiple explicit package targets", async (t) =>
         ),
         ["manifest.json"],
     );
+});
+
+test("runPackageCommand creates tar.gz raw world archives by default", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, {
+        packageConfig: {
+            defaultTargets: ["world"],
+        },
+    });
+    const worldRoot = path.join(projectRoot, "worlds", "Bedrock level");
+    await writeFile(path.join(worldRoot, ".gitkeep"), "");
+    await writeFile(path.join(worldRoot, "level.dat.blr-backup-20260516"), "");
+    await writeFile(path.join(worldRoot, "db", "CURRENT.bak"), "");
+
+    await runPackageForTest(projectRoot);
+
+    const entries = await readTarGzEntryNames(
+        path.join(
+            projectRoot,
+            "dist",
+            "packages",
+            "Bedrock level-world.tar.gz",
+        ),
+    );
+    assert.ok(entries.includes("db/"));
+    assert.ok(entries.includes("db/CURRENT"));
+    assert.ok(entries.includes("levelname.txt"));
+    assert.equal(entries.includes(".gitkeep"), false);
+    assert.equal(entries.includes("level.dat.blr-backup-20260516"), false);
+    assert.equal(entries.includes("db/CURRENT.bak"), false);
+    assert.equal(
+        entries.includes("behavior_packs/gamebp/manifest.json"),
+        false,
+    );
+    assert.equal(entries.includes("world_behavior_packs.json"), false);
+});
+
+test("runPackageCommand excludes world backup directories from raw world archives", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot);
+    const worldRoot = path.join(projectRoot, "worlds", "Bedrock level");
+    await mkdir(
+        path.join(
+            worldRoot,
+            ".world_backups",
+            "world_backup_001_20260331_053706",
+        ),
+        { recursive: true },
+    );
+    await writeFile(
+        path.join(worldRoot, ".world_backups", "world_backup_metadata.json"),
+        "{}",
+    );
+    await writeFile(
+        path.join(
+            worldRoot,
+            ".world_backups",
+            "world_backup_001_20260331_053706.zip",
+        ),
+        "backup zip",
+    );
+    await mkdir(
+        path.join(
+            worldRoot,
+            "worlds_backups",
+            "Bedrock level.20260516T143000Z",
+            "db",
+        ),
+        { recursive: true },
+    );
+    await mkdir(path.join(worldRoot, "Bedrock level.20260516T143000Z", "db"), {
+        recursive: true,
+    });
+    await writeFile(
+        path.join(
+            worldRoot,
+            "worlds_backups",
+            "Bedrock level.20260516T143000Z",
+            "levelname.txt",
+        ),
+        "Runtime backup world",
+    );
+    await writeFile(
+        path.join(worldRoot, "Bedrock level.20260516T143000Z", "levelname.txt"),
+        "Timestamped backup world",
+    );
+
+    await runPackageForTest(projectRoot, "world");
+
+    const entries = await readTarGzEntryNames(
+        path.join(
+            projectRoot,
+            "dist",
+            "packages",
+            "Bedrock level-world.tar.gz",
+        ),
+    );
+    assert.ok(entries.includes("db/CURRENT"));
+    assert.equal(entries.includes(".world_backups/"), false);
+    assert.equal(
+        entries.includes(".world_backups/world_backup_metadata.json"),
+        false,
+    );
+    assert.equal(
+        entries.includes(".world_backups/world_backup_001_20260331_053706.zip"),
+        false,
+    );
+    assert.equal(entries.includes("worlds_backups/"), false);
+    assert.equal(
+        entries.includes(
+            "worlds_backups/Bedrock level.20260516T143000Z/levelname.txt",
+        ),
+        false,
+    );
+    assert.equal(entries.includes("Bedrock level.20260516T143000Z/"), false);
+    assert.equal(
+        entries.includes("Bedrock level.20260516T143000Z/levelname.txt"),
+        false,
+    );
+});
+
+test("runPackageCommand creates configured zip raw world archives", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, {
+        packageConfig: {
+            world: {
+                format: "zip",
+            },
+        },
+    });
+
+    await runPackageForTest(projectRoot, "world");
+
+    const entries = readZipEntryNames(
+        path.join(projectRoot, "dist", "packages", "Bedrock level-world.zip"),
+    );
+    assert.ok(entries.includes("db/CURRENT"));
+    assert.ok(entries.includes("levelname.txt"));
+    assert.equal(
+        entries.includes("behavior_packs/gamebp/manifest.json"),
+        false,
+    );
+    assert.equal(entries.includes("world_behavior_packs.json"), false);
+});
+
+test("runPackageCommand lets CLI world format override config", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, {
+        packageConfig: {
+            world: {
+                format: "zip",
+            },
+        },
+    });
+
+    await runPackageForTest(projectRoot, "world", { worldFormat: "mcworld" });
+
+    const entries = readZipEntryNames(
+        path.join(
+            projectRoot,
+            "dist",
+            "packages",
+            "Bedrock level-world.mcworld",
+        ),
+    );
+    assert.ok(entries.includes("db/CURRENT"));
+    assert.ok(entries.includes("levelname.txt"));
 });

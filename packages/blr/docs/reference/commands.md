@@ -245,6 +245,7 @@ Currently supported targets:
 - `mcaddon`
 - `behavior-pack`
 - `resource-pack`
+- `world`
 
 `mctemplate` behavior:
 
@@ -290,6 +291,18 @@ Currently supported targets:
 - does not require a project world source
 - fails if the project has no staged resource pack
 
+`world` behavior:
+
+- runs `build` first
+- reads the selected project world source
+- copies the raw world contents into a package workspace without staged packs
+- skips backup and noise files such as `.gitkeep`, `.DS_Store`, `Thumbs.db`, `.world_backups`, `worlds_backups`, `*.blr-backup-*`, `*.bak`, `*.tmp`, and timestamped world backup directories
+- writes `dist/packages/<worldName>-world.tar.gz` by default
+- supports `tar.gz`, `zip`, and `mcworld` world package formats
+- uses the same archive structure for every format, with the Bedrock world files at the archive root
+- requires the project world source to contain a valid Bedrock world (`db/` directory)
+- if `world.backend` is `s3`, pull the world first with `blr world pull`
+
 Target resolution:
 
 - if one or more `<targets>` are passed, `blr` packages those targets in order
@@ -301,6 +314,7 @@ Flags:
 
 - `--production [enabled]`: enable or disable production bundling before packaging
 - `--world <worldName>`: override the active world for this packaging run
+- `--world-format <format>`: override the raw world package format for this run (`tar.gz`, `zip`, or `mcworld`)
 - `--include-behavior-pack [enabled]`: enable or disable behavior-pack inclusion for package targets that embed staged packs
 - `--include-resource-pack [enabled]`: enable or disable resource-pack inclusion for package targets that embed staged packs
 - `--debug [enabled]`: enable or disable debug logs for packaging activity
@@ -313,6 +327,8 @@ blr package mctemplate
 blr package mcworld
 blr package mcaddon
 blr package behavior-pack resource-pack
+blr package world
+blr package world --world-format zip
 blr package --world "Creative Sandbox"
 blr package mctemplate --production
 blr package mcworld --debug

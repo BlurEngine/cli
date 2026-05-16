@@ -21,6 +21,7 @@ const CONFIG_ENV_SPECS: ConfigEnvSpec[] = [
     { path: ["world", "s3", "lockTtlSeconds"], kind: "number" },
     { path: ["package", "defaultTarget"], kind: "string" },
     { path: ["package", "defaultTargets"], kind: "stringArray" },
+    { path: ["package", "world", "format"], kind: "string" },
     {
         path: ["package", "worldTemplate", "include", "behaviorPack"],
         kind: "boolean",

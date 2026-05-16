@@ -309,6 +309,10 @@ async function main(): Promise<void> {
             "Override the active world for this packaging run",
         )
         .option(
+            "--world-format <format>",
+            "Override the raw world package format: tar.gz | zip | mcworld",
+        )
+        .option(
             "--include-behavior-pack [enabled]",
             "Enable or disable behavior-pack inclusion for this packaging run",
             parseOptionalBoolean,

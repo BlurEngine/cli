@@ -7,6 +7,7 @@ export type WorldBackend = "local" | "s3";
 export type MinecraftChannel = "stable" | "preview";
 export type WorldSyncProjectMode = "prompt" | "auto" | "manual";
 export type WorldSyncRuntimeMode = "prompt" | "preserve" | "replace" | "backup";
+export type WorldPackageFormat = "tar.gz" | "zip" | "mcworld";
 
 export type MinecraftProduct =
     | "BedrockGDK"
@@ -23,7 +24,8 @@ export type PackageTarget =
     | "mcworld"
     | "mcaddon"
     | "behavior-pack"
-    | "resource-pack";
+    | "resource-pack"
+    | "world";
 
 /**
  * Per-pack feature toggles for behavior-pack and resource-pack automation.
@@ -126,6 +128,16 @@ export interface BlurConfigPackageWorldTemplateFile {
 }
 
 /**
+ * Raw project-world packaging defaults.
+ */
+export interface BlurConfigPackageWorldFile {
+    /**
+     * Archive format used by the `world` package target.
+     */
+    format?: WorldPackageFormat;
+}
+
+/**
  * Packaging defaults for `blr package`.
  */
 export interface BlurConfigPackageFile {
@@ -141,6 +153,10 @@ export interface BlurConfigPackageFile {
      * Pack inclusion defaults for packaging targets that embed project packs.
      */
     worldTemplate?: BlurConfigPackageWorldTemplateFile;
+    /**
+     * Raw project-world packaging defaults.
+     */
+    world?: BlurConfigPackageWorldFile;
 }
 
 /**
@@ -455,6 +471,9 @@ export interface BlurProject {
     package: {
         defaultTarget?: PackageTarget;
         defaultTargets?: PackageTarget[];
+        world: {
+            format: WorldPackageFormat;
+        };
     };
 }
 

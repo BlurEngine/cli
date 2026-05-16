@@ -155,6 +155,10 @@
         "worldTemplate": {
           "$ref": "#/definitions/BlurConfigPackageWorldTemplateFile",
           "description": "Pack inclusion defaults for packaging targets that embed project packs."
+        },
+        "world": {
+          "$ref": "#/definitions/BlurConfigPackageWorldFile",
+          "description": "Raw project-world packaging defaults."
         }
       },
       "additionalProperties": false,
@@ -167,7 +171,8 @@
         "mcworld",
         "mcaddon",
         "behavior-pack",
-        "resource-pack"
+        "resource-pack",
+        "world"
       ]
     },
     "BlurConfigPackageWorldTemplateFile": {
@@ -195,6 +200,21 @@
       },
       "additionalProperties": false,
       "description": "Per-pack feature toggles for behavior-pack and resource-pack automation."
+    },
+    "BlurConfigPackageWorldFile": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "$ref": "#/definitions/WorldPackageFormat",
+          "description": "Archive format used by the `world` package target."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Raw project-world packaging defaults."
+    },
+    "WorldPackageFormat": {
+      "type": "string",
+      "enum": ["tar.gz", "zip", "mcworld"]
     },
     "BlurConfigRuntimeFile": {
       "type": "object",

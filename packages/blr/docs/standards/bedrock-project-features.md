@@ -56,6 +56,7 @@ This means the project shape itself is the default source of truth.
 
 - includes only the content types that are present for the selected package target
 - standalone pack targets package only their corresponding staged pack as `.mcpack`
+- the `world` target packages only the selected project world source as a raw world archive, without injecting staged packs
 
 ## Override Rule
 

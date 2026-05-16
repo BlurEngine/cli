@@ -30,6 +30,7 @@ import type {
     PackManifestConfig,
     PermissionLevel,
     VersionTuple,
+    WorldPackageFormat,
     WorldBackend,
     WorldSyncProjectMode,
     WorldSyncRuntimeMode,
@@ -43,6 +44,10 @@ import {
     assertValidWorldName,
     defaultProjectWorldSourcePath,
 } from "./world.js";
+import {
+    DEFAULT_WORLD_PACKAGE_FORMAT,
+    isWorldPackageFormat,
+} from "./world-package-formats.js";
 
 type LoadedBlurConfig = {
     projectRoot: string;
@@ -134,6 +139,13 @@ function ensurePackageTargets(value: unknown): PackageTarget[] | undefined {
         : undefined;
 }
 
+function ensureWorldPackageFormat(
+    value: unknown,
+    fallback: WorldPackageFormat,
+): WorldPackageFormat {
+    return isWorldPackageFormat(value) ? value : fallback;
+}
+
 function ensureMinecraftChannel(
     value: unknown,
     fallback: MinecraftChannel,
@@ -199,6 +211,7 @@ function coerceBlurConfigFile(
     const world = (raw.world ?? {}) as Record<string, unknown>;
     const worldS3 = (world.s3 ?? {}) as Record<string, unknown>;
     const packageConfig = (raw.package ?? {}) as Record<string, unknown>;
+    const packageWorld = (packageConfig.world ?? {}) as Record<string, unknown>;
     const packageWorldTemplate = (packageConfig.worldTemplate ?? {}) as Record<
         string,
         unknown
@@ -298,6 +311,12 @@ function coerceBlurConfigFile(
                             ? packageWorldTemplateInclude.resourcePack
                             : undefined,
                 },
+            },
+            world: {
+                format: ensureWorldPackageFormat(
+                    packageWorld.format,
+                    DEFAULT_WORLD_PACKAGE_FORMAT,
+                ),
             },
         },
         runtime: {
@@ -800,6 +819,12 @@ export async function loadBlurConfig(
             defaultTargets: ensurePackageTargets(
                 configFile.package?.defaultTargets,
             ),
+            world: {
+                format: ensureWorldPackageFormat(
+                    configFile.package?.world?.format,
+                    DEFAULT_WORLD_PACKAGE_FORMAT,
+                ),
+            },
         },
     };
 

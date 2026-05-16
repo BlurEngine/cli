@@ -161,6 +161,7 @@ test("loadBlurConfig accepts package.defaultTarget package formats", async (t) =
         "mcaddon",
         "behavior-pack",
         "resource-pack",
+        "world",
     ]) {
         const projectRoot = await createTempDirectory(t, "blr-config-");
         await createMinimalProject(projectRoot, {
@@ -193,6 +194,50 @@ test("loadBlurConfig accepts package.defaultTargets package formats", async (t) 
         "behavior-pack",
         "resource-pack",
     ]);
+});
+
+test("loadBlurConfig accepts package.world.format", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        package: {
+            world: {
+                format: "zip",
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.package.world.format, "zip");
+});
+
+test("loadBlurConfig respects environment overrides for package world format", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        package: {
+            world: {
+                format: "zip",
+            },
+        },
+    });
+
+    const previousWorldFormat = process.env.BLR_PACKAGE_WORLD_FORMAT;
+    process.env.BLR_PACKAGE_WORLD_FORMAT = "mcworld";
+    t.after(() => {
+        if (typeof previousWorldFormat === "undefined") {
+            delete process.env.BLR_PACKAGE_WORLD_FORMAT;
+            return;
+        }
+        process.env.BLR_PACKAGE_WORLD_FORMAT = previousWorldFormat;
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.package.world.format, "mcworld");
 });
 
 test("loadBlurConfig respects environment overrides for package defaultTargets", async (t) => {

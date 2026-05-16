@@ -8,11 +8,13 @@ export const SUPPORTED_PACKAGE_TARGETS = [
     "mcaddon",
     "behavior-pack",
     "resource-pack",
+    "world",
 ] as const satisfies readonly PackageTarget[];
 
 export const PACKAGE_TARGETS_REQUIRING_WORLD = [
     "mctemplate",
     "mcworld",
+    "world",
 ] as const satisfies readonly PackageTarget[];
 
 const PACKAGE_TARGET_SET = new Set<string>(SUPPORTED_PACKAGE_TARGETS);
