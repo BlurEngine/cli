@@ -1,5 +1,17 @@
 # @blurengine/cli
 
+## 0.9.0
+
+### Minor Changes
+
+- [`5f88d49`](https://github.com/BlurEngine/cli/commit/5f88d4913d31e8ed4e34babcc4533e1f2f9e7597) Thanks [@SupaHam](https://github.com/SupaHam)! - Add a configurable raw world package target that exports project worlds as tar.gz, zip, or mcworld archives.
+
+### Patch Changes
+
+- [`7b1e432`](https://github.com/BlurEngine/cli/commit/7b1e4328cfead0ebdc002792a788ba0e54891d7f) Thanks [@SupaHam](https://github.com/SupaHam)! - Limit the default `blr dev` hotreload watcher to `src/**/*` and ignore `.test.*` files. Behavior-pack and resource-pack paths can still be explicitly watched, but they resync without sending a local-server reload.
+
+- [`5cf869f`](https://github.com/BlurEngine/cli/commit/5cf869faa2bb62a4dae971ee7a49e6410dcc4b1b) Thanks [@SupaHam](https://github.com/SupaHam)! - Add standalone behavior-pack and resource-pack package targets, plus configurable multi-target defaults for `blr package`.
+
 ## 0.8.0
 
 ### Minor Changes
