@@ -1,5 +1,11 @@
 # @blurengine/cli
 
+## 0.9.1
+
+### Patch Changes
+
+- [`53ca359`](https://github.com/BlurEngine/cli/commit/53ca359bd70cfa312714f2eddadadf86058860c5) Thanks [@SupaHam](https://github.com/SupaHam)! - Retry local-server BDS directory replacement when Windows reports a transient permission error while promoting the extracted server folder.
+
 ## 0.9.0
 
 ### Minor Changes
