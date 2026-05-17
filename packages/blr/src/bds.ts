@@ -327,6 +327,21 @@ export type WorldSourceBootstrapResult =
     | "copied"
     | "waiting-for-runtime";
 
+type RenameDirectory = (
+    sourcePath: string,
+    destinationPath: string,
+) => Promise<void>;
+type RemoveDirectory = (targetPath: string) => Promise<void>;
+
+type ReplaceBdsServerDirectoryOptions = {
+    debug?: DebugLogger;
+    retryDelaysMs?: readonly number[];
+    renameDirectory?: RenameDirectory;
+    removeDirectory?: RemoveDirectory;
+};
+
+const BDS_SERVER_REPLACE_RETRY_DELAYS_MS = [50, 100, 250, 500] as const;
+
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -791,6 +806,69 @@ async function ensureModulePermissions(serverDirectory: string): Promise<void> {
     });
 }
 
+function fileSystemErrorCode(error: unknown): string | undefined {
+    if (!error || typeof error !== "object" || !("code" in error)) {
+        return undefined;
+    }
+
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+}
+
+function isRetryableBdsServerRenameError(error: unknown): boolean {
+    const code = fileSystemErrorCode(error);
+    return code === "EPERM" || code === "EACCES" || code === "ENOTEMPTY";
+}
+
+async function wait(milliseconds: number): Promise<void> {
+    if (milliseconds <= 0) {
+        return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function replaceBdsServerDirectory(
+    stagingDirectory: string,
+    serverDirectory: string,
+    options: ReplaceBdsServerDirectoryOptions = {},
+): Promise<void> {
+    const renameDirectory = options.renameDirectory ?? rename;
+    const removeDirectoryOperation = options.removeDirectory ?? removeDirectory;
+    const retryDelaysMs =
+        options.retryDelaysMs ?? BDS_SERVER_REPLACE_RETRY_DELAYS_MS;
+
+    await removeDirectoryOperation(serverDirectory);
+
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            await renameDirectory(stagingDirectory, serverDirectory);
+            return;
+        } catch (error) {
+            const retryDelayMs = retryDelaysMs[attempt];
+            if (
+                typeof retryDelayMs !== "number" ||
+                !isRetryableBdsServerRenameError(error)
+            ) {
+                throw error;
+            }
+
+            options.debug?.log(
+                "bds",
+                "retrying BDS server directory replacement",
+                {
+                    attempt: attempt + 1,
+                    retryDelayMs,
+                    errorCode: fileSystemErrorCode(error),
+                    stagingDirectory,
+                    serverDirectory,
+                },
+            );
+            await wait(retryDelayMs);
+            await removeDirectoryOperation(serverDirectory);
+        }
+    }
+}
+
 async function extractIfMissing(
     projectRoot: string,
     config: BlurProject,
@@ -860,8 +938,11 @@ async function extractIfMissing(
             );
         }
 
-        await removeDirectory(state.serverDirectory);
-        await rename(stagingDirectory, state.serverDirectory);
+        await replaceBdsServerDirectory(
+            stagingDirectory,
+            state.serverDirectory,
+            { debug },
+        );
         extracted = true;
     } finally {
         if (!extracted) {

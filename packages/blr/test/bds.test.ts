@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+    access,
+    mkdir,
+    readFile,
+    rename as renamePath,
+    rm,
+    writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import AdmZip from "adm-zip";
@@ -12,6 +19,7 @@ import {
     capturePermissionsFromBds,
     ensureBds,
     prefetchBdsArchive,
+    replaceBdsServerDirectory,
     resolveBdsOutputRelayMode,
 } from "../src/bds.js";
 import { createTempDirectory } from "./helpers.js";
@@ -166,6 +174,59 @@ test("resolveBdsOutputRelayMode falls back to pipes when PTY support is unavaila
         }),
         "pipe",
     );
+});
+
+test("replaceBdsServerDirectory retries after Windows EPERM when the destination reappears", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-bds-replace-");
+    const stagingDirectory = path.join(projectRoot, "server.tmp-test");
+    const serverDirectory = path.join(projectRoot, "server");
+    const runtimeExecutablePath = path.join(
+        serverDirectory,
+        "bedrock_server.exe",
+    );
+
+    await mkdir(stagingDirectory, { recursive: true });
+    await writeFile(
+        path.join(stagingDirectory, "bedrock_server.exe"),
+        "stock executable",
+    );
+
+    let renameAttempts = 0;
+    const removedDirectories: string[] = [];
+
+    await replaceBdsServerDirectory(stagingDirectory, serverDirectory, {
+        retryDelaysMs: [0],
+        async removeDirectory(targetPath) {
+            removedDirectories.push(path.basename(targetPath));
+            await rm(targetPath, { recursive: true, force: true });
+        },
+        async renameDirectory(sourcePath, destinationPath) {
+            renameAttempts += 1;
+            if (renameAttempts === 1) {
+                await mkdir(destinationPath, { recursive: true });
+                await writeFile(path.join(destinationPath, "stale.txt"), "");
+                const error = new Error(
+                    `EPERM: operation not permitted, rename '${sourcePath}' -> '${destinationPath}'`,
+                ) as NodeJS.ErrnoException;
+                error.code = "EPERM";
+                throw error;
+            }
+
+            await renamePath(sourcePath, destinationPath);
+        },
+    });
+
+    assert.equal(renameAttempts, 2);
+    assert.deepEqual(removedDirectories, ["server", "server"]);
+    assert.equal(
+        await readFile(runtimeExecutablePath, "utf8"),
+        "stock executable",
+    );
+    assert.equal(
+        await pathExists(path.join(serverDirectory, "stale.txt")),
+        false,
+    );
+    assert.equal(await pathExists(stagingDirectory), false);
 });
 
 test("ensureBds does not leave a versioned server directory behind after an invalid archive response", async (t) => {
