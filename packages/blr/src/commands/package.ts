@@ -45,6 +45,12 @@ import {
     formatSupportedWorldPackageFormats,
     isWorldPackageFormat,
 } from "../world-package-formats.js";
+import {
+    exportWorldImage,
+    normalizeWorldImageFileName,
+    type ExportedWorldImageFile,
+    type ExportWorldImageResult,
+} from "../world-image.js";
 
 type PackageCommandOptions = {
     production?: boolean;
@@ -56,7 +62,7 @@ type PackageCommandOptions = {
 };
 
 type StandalonePackKind = "behavior" | "resource";
-type WorkspacePackageTarget = Exclude<PackageTarget, "world">;
+type WorkspacePackageTarget = Exclude<PackageTarget, "world" | "assets">;
 
 type PackageTargetDefinition = {
     workspaceDirectoryName: string;
@@ -120,6 +126,26 @@ type WorldTemplateManifest = {
         version: VersionTuple;
         type: "world_template";
         uuid: string;
+    }>;
+};
+
+type AssetsPackageManifest = {
+    schemaVersion: 1;
+    assets: Array<{
+        type: "world-image";
+        variant: string;
+        worldName: string;
+        dimension: string;
+        path: string;
+        width: number;
+        height: number;
+        processedWorld: ExportWorldImageResult["processedWorld"];
+        chunkCount: number;
+        columnCount: number;
+        minHeight: number;
+        maxHeight: number;
+        terrainColumnCount?: number;
+        terrainDiagnostics?: ExportWorldImageResult["terrainDiagnostics"];
     }>;
 };
 
@@ -364,6 +390,102 @@ async function packageRawWorldTarget(
     return {
         workspaceRoot,
         outputFile,
+    };
+}
+
+async function packageAssetsTarget(
+    projectRoot: string,
+    config: BlurProject,
+    worldName: string,
+    worldSourcePath: string,
+): Promise<{
+    workspaceRoot: string;
+    outputFile: string;
+}> {
+    const artifacts = resolveBuildArtifacts(projectRoot, config);
+    const workspaceRoot = path.join(artifacts.packagesRoot, "assets");
+    const outputFile = path.join(artifacts.packagesRoot, "assets.zip");
+    const manifest: AssetsPackageManifest = {
+        schemaVersion: 1,
+        assets: [],
+    };
+
+    await removeDirectory(workspaceRoot);
+    await ensureDirectory(workspaceRoot);
+    await ensureDirectory(artifacts.packagesRoot);
+
+    if (config.package.assets.worldImage.enabled) {
+        const fileName = normalizeWorldImageFileName(
+            config.package.assets.worldImage.fileName,
+            "package.assets.worldImage.fileName",
+        );
+        const imageOutputPath = path.join(
+            workspaceRoot,
+            "worlds",
+            worldName,
+            fileName,
+        );
+        const exported = await exportWorldImage({
+            worldSourceDirectory: resolveProjectWorldSourceDirectory(
+                projectRoot,
+                worldSourcePath,
+            ),
+            outputPath: imageOutputPath,
+            dimension: config.package.assets.worldImage.dimension,
+            scale: config.package.assets.worldImage.scale,
+        });
+        for (const output of exported.outputs) {
+            manifest.assets.push(
+                toWorldImageAssetManifestEntry(
+                    workspaceRoot,
+                    worldName,
+                    exported,
+                    output,
+                ),
+            );
+        }
+    }
+
+    await writeJson(path.join(workspaceRoot, "assets.json"), manifest);
+
+    const archive = new AdmZip();
+    archive.addLocalFolder(workspaceRoot);
+    await removeDirectory(outputFile);
+    archive.writeZip(outputFile);
+
+    return {
+        workspaceRoot,
+        outputFile,
+    };
+}
+
+function toWorldImageAssetManifestEntry(
+    workspaceRoot: string,
+    worldName: string,
+    exported: ExportWorldImageResult,
+    output: ExportedWorldImageFile,
+): AssetsPackageManifest["assets"][number] {
+    return {
+        type: "world-image",
+        variant: output.variant,
+        worldName,
+        dimension: exported.dimension,
+        path: path
+            .relative(workspaceRoot, output.outputPath)
+            .replace(/\\/g, "/"),
+        width: output.width,
+        height: output.height,
+        processedWorld: exported.processedWorld,
+        chunkCount: exported.chunkCount,
+        columnCount: exported.columnCount,
+        minHeight: exported.minHeight,
+        maxHeight: exported.maxHeight,
+        ...(output.variant === "terrain"
+            ? {
+                  terrainColumnCount: exported.terrainColumnCount,
+                  terrainDiagnostics: exported.terrainDiagnostics,
+              }
+            : {}),
     };
 }
 
@@ -638,7 +760,14 @@ function resolvePackageTargets(
     return [DEFAULT_PACKAGE_TARGET];
 }
 
-function packageTargetRequiresWorld(target: PackageTarget): boolean {
+function packageTargetRequiresWorld(
+    target: PackageTarget,
+    config: BlurProject,
+): boolean {
+    if (target === "assets") {
+        return config.package.assets.worldImage.enabled;
+    }
+
     return (
         PACKAGE_TARGETS_REQUIRING_WORLD as readonly PackageTarget[]
     ).includes(target);
@@ -677,7 +806,7 @@ export async function runPackageCommand(
         defaultTargets: config.package.defaultTargets ?? null,
     });
 
-    if (targets.some((target) => packageTargetRequiresWorld(target))) {
+    if (targets.some((target) => packageTargetRequiresWorld(target, config))) {
         try {
             await assertValidProjectWorldSource(
                 projectRoot,
@@ -705,14 +834,21 @@ export async function runPackageCommand(
                       selectedWorld.worldSourcePath,
                       worldPackageFormat,
                   )
-                : await packageProjectTarget(
-                      target,
-                      projectRoot,
-                      config,
-                      selectedWorld.worldName,
-                      selectedWorld.worldSourcePath,
-                      includeSelection,
-                  );
+                : target === "assets"
+                  ? await packageAssetsTarget(
+                        projectRoot,
+                        config,
+                        selectedWorld.worldName,
+                        selectedWorld.worldSourcePath,
+                    )
+                  : await packageProjectTarget(
+                        target,
+                        projectRoot,
+                        config,
+                        selectedWorld.worldName,
+                        selectedWorld.worldSourcePath,
+                        includeSelection,
+                    );
         console.log(
             `[package] Created ${path.relative(projectRoot, packaged.outputFile)} from ${path.relative(projectRoot, packaged.workspaceRoot)}`,
         );

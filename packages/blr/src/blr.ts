@@ -18,6 +18,7 @@ import {
 import { runUpgradeCommand } from "./commands/upgrade.js";
 import {
     runWorldCaptureCommand,
+    runWorldImageCommand,
     runWorldLevelDatDiffCommand,
     runWorldLevelDatEditCommand,
     runWorldLevelDatDumpCommand,
@@ -497,6 +498,40 @@ async function main(): Promise<void> {
                 opts: Record<string, unknown>,
             ) => {
                 await runWorldStatusCommand(worldName, opts as any);
+            },
+        );
+
+    world
+        .command("image")
+        .description("Export a top-down 2D PNG image from a project world.")
+        .argument(
+            "[worldName]",
+            "World name. Defaults to dev.localServer.worldName",
+        )
+        .option(
+            "--output <path>",
+            "Primary loaded-columns PNG path. Terrain, shade, and full variants use the same stem.",
+        )
+        .option(
+            "--dimension <dimension>",
+            "World dimension to render: overworld | nether | end",
+        )
+        .option(
+            "--scale <scale>",
+            "Integer pixel scale applied to each world column",
+        )
+        .option(
+            "--debug [enabled]",
+            "Enable or disable debug logs for world image export activity",
+            parseOptionalBoolean,
+        )
+        .option("--timings", "Print world image export timing checkpoints")
+        .action(
+            async (
+                worldName: string | undefined,
+                opts: Record<string, unknown>,
+            ) => {
+                await runWorldImageCommand(worldName, opts as any);
             },
         );
 

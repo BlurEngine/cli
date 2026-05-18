@@ -8,6 +8,7 @@ export type MinecraftChannel = "stable" | "preview";
 export type WorldSyncProjectMode = "prompt" | "auto" | "manual";
 export type WorldSyncRuntimeMode = "prompt" | "preserve" | "replace" | "backup";
 export type WorldPackageFormat = "tar.gz" | "zip" | "mcworld";
+export type WorldImageDimension = "overworld" | "nether" | "end";
 
 export type MinecraftProduct =
     | "BedrockGDK"
@@ -25,7 +26,8 @@ export type PackageTarget =
     | "mcaddon"
     | "behavior-pack"
     | "resource-pack"
-    | "world";
+    | "world"
+    | "assets";
 
 /**
  * Per-pack feature toggles for behavior-pack and resource-pack automation.
@@ -138,6 +140,39 @@ export interface BlurConfigPackageWorldFile {
 }
 
 /**
+ * World image export defaults for generated asset archives.
+ */
+export interface BlurConfigPackageAssetsWorldImageFile {
+    /**
+     * Whether the `assets` package target should include generated 2D world image PNGs.
+     */
+    enabled?: boolean;
+    /**
+     * World dimension to render for the generated image.
+     */
+    dimension?: WorldImageDimension;
+    /**
+     * Integer pixel scale applied to each world column.
+     */
+    scale?: number;
+    /**
+     * File name used for the primary loaded-columns PNG inside assets output.
+     * Terrain, shade, and full variants are written beside it using the same stem.
+     */
+    fileName?: string;
+}
+
+/**
+ * Generated reusable asset package defaults.
+ */
+export interface BlurConfigPackageAssetsFile {
+    /**
+     * Generated 2D world image settings.
+     */
+    worldImage?: BlurConfigPackageAssetsWorldImageFile;
+}
+
+/**
  * Packaging defaults for `blr package`.
  */
 export interface BlurConfigPackageFile {
@@ -157,6 +192,10 @@ export interface BlurConfigPackageFile {
      * Raw project-world packaging defaults.
      */
     world?: BlurConfigPackageWorldFile;
+    /**
+     * Generated reusable asset package defaults.
+     */
+    assets?: BlurConfigPackageAssetsFile;
 }
 
 /**
@@ -473,6 +512,14 @@ export interface BlurProject {
         defaultTargets?: PackageTarget[];
         world: {
             format: WorldPackageFormat;
+        };
+        assets: {
+            worldImage: {
+                enabled: boolean;
+                dimension: WorldImageDimension;
+                scale: number;
+                fileName: string;
+            };
         };
     };
 }

@@ -312,3 +312,7 @@ Current package targets:
 - `<packName>.mctemplate` from `blr package`
 - `<packName>.mcworld` from `blr package mcworld`
 - `<packName>.mcaddon` from `blr package mcaddon`
+- `<behaviorPackName>-behavior.mcpack` from `blr package behavior-pack`
+- `<resourcePackName>-resource.mcpack` from `blr package resource-pack`
+- `<worldName>-world.<format>` from `blr package world`
+- `assets.zip` from `blr package assets`

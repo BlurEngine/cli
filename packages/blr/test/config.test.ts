@@ -162,6 +162,7 @@ test("loadBlurConfig accepts package.defaultTarget package formats", async (t) =
         "behavior-pack",
         "resource-pack",
         "world",
+        "assets",
     ]) {
         const projectRoot = await createTempDirectory(t, "blr-config-");
         await createMinimalProject(projectRoot, {
@@ -211,6 +212,33 @@ test("loadBlurConfig accepts package.world.format", async (t) => {
 
     const { config } = await loadBlurConfig(projectRoot);
     assert.equal(config.package.world.format, "zip");
+});
+
+test("loadBlurConfig accepts package.assets.worldImage options", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        package: {
+            assets: {
+                worldImage: {
+                    enabled: false,
+                    dimension: "nether",
+                    scale: 3,
+                    fileName: "nether-map.png",
+                },
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.package.assets.worldImage, {
+        enabled: false,
+        dimension: "nether",
+        scale: 3,
+        fileName: "nether-map.png",
+    });
 });
 
 test("loadBlurConfig respects environment overrides for package world format", async (t) => {

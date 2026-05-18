@@ -246,6 +246,7 @@ Currently supported targets:
 - `behavior-pack`
 - `resource-pack`
 - `world`
+- `assets`
 
 `mctemplate` behavior:
 
@@ -303,6 +304,17 @@ Currently supported targets:
 - requires the project world source to contain a valid Bedrock world (`db/` directory)
 - if `world.backend` is `s3`, pull the world first with `blr world pull`
 
+`assets` behavior:
+
+- runs `build` first
+- writes `dist/packages/assets.zip`
+- writes an `assets.json` manifest at the archive root
+- includes `worlds/<worldName>/map.png`, `map.terrain.png`, `map.shade.png`, `map.full.png`, and `map.terrain.audit.json` by default when `package.assets.worldImage.enabled` is `true`
+- renders generated world images from Bedrock LevelDB `Data3D` loaded-column and biome records plus `SubChunkPrefix` block records in the selected project world source
+- copies the world `db/` directory to a temporary location before reading it
+- requires the project world source to contain a valid Bedrock world (`db/` directory) when world image generation is enabled
+- if `world.backend` is `s3`, pull the world first with `blr world pull`
+
 Target resolution:
 
 - if one or more `<targets>` are passed, `blr` packages those targets in order
@@ -328,6 +340,7 @@ blr package mcworld
 blr package mcaddon
 blr package behavior-pack resource-pack
 blr package world
+blr package assets
 blr package world --world-format zip
 blr package --world "Creative Sandbox"
 blr package mctemplate --production
@@ -533,6 +546,46 @@ Behavior:
 Flags:
 
 - `--debug [enabled]`: enable or disable debug logs for world backend activity
+
+### `blr world image`
+
+Exports top-down 2D PNGs from the selected project world source.
+
+Syntax:
+
+```text
+blr world image [worldName]
+```
+
+Behavior:
+
+- resolves the selected project world source using the same world-selection rules as other `blr world` commands
+- reads Bedrock LevelDB `Data3D` heightmap records from `<worldSourcePath>/db`
+- reads Bedrock LevelDB `SubChunkPrefix` block records from `<worldSourcePath>/db`
+- copies the `db/` directory to a temporary location before opening LevelDB
+- renders a loaded-columns PNG plus terrain, shade, and full PNG variants
+- defaults to `dist/assets/worlds/<worldName>/map.png`
+- writes sibling image variants beside the primary file:
+  - `map.terrain.png`: top-down terrain colors from actual Bedrock block data
+  - `map.shade.png`: grayscale local-height-difference shading
+  - `map.full.png`: terrain colors multiplied by local-height-difference shading
+- writes `map.terrain.audit.json` beside the terrain PNG with processed world bounds, block dimensions, image dimensions, actual top-column block counts, tint counts, fallback counts, and unknown-block counts
+- the terrain image is block-derived from `SubChunkPrefix` records and does not use the `Data3D` heightmap cache as terrain truth
+- biome tinting uses `Data3D` biome palettes at the selected top block's Y slice; legacy `Data2D` stores only XZ biomes and is not the terrain tint source
+- supports the `overworld`, `nether`, and `end` dimensions
+- if the local world source is missing for an S3-backed project, the error points back to `blr world pull`
+
+Maintainer note:
+
+Terrain colors are generated from an external `bedrock-samples` checkout. Maintainers can run `npm run generate:terrain-colors`. The script uses `../forks/bedrock-samples` by default, or `BLR_BEDROCK_SAMPLES_DIR` from an ignored `.env.local`. Do not commit proprietary texture assets or real local paths.
+
+Flags:
+
+- `--output <path>`: write the primary loaded-columns PNG to a project-relative or absolute output path; terrain, shade, and full variants use the same stem
+- `--dimension <dimension>`: `overworld | nether | end`
+- `--scale <scale>`: integer pixel scale from `1` to `16`
+- `--debug [enabled]`: enable or disable debug logs for world image export activity
+- `--timings`: print timing checkpoints for database copy, LevelDB reads, audit writing, rendering, PNG writing, cleanup, and total duration
 
 ### `blr world level-dat dump`
 
@@ -769,6 +822,9 @@ Examples:
 blr world use "Creative Sandbox"
 blr world list
 blr world status
+blr world image
+blr world image --output previews/world-map.png --scale 2
+blr world image "Creative Sandbox" --dimension nether
 blr world level-dat edit
 blr world level-dat edit --path ./worlds/Bedrock level
 blr world level-dat edit --path C:/Users/example/Downloads/level (1).dat

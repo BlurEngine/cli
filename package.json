@@ -28,6 +28,8 @@
     "lint": "npm run --workspaces lint",
     "check": "npm run format:check && npm run --workspaces check",
     "test": "npm run --workspaces test",
+    "generate:terrain-colors": "npm run --workspace @blurengine/cli generate:terrain-colors",
+    "check:terrain-colors": "npm run --workspace @blurengine/cli check:terrain-colors",
     "dev:blr": "npm run --workspace @blurengine/cli dev",
     "hooks:install": "node ./scripts/install-hooks.mjs",
     "changeset": "changeset",

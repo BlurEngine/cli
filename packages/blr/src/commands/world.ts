@@ -49,12 +49,20 @@ import {
 } from "../world-backend.js";
 import {
     appendWorldSourceHint,
+    assertValidProjectWorldSource,
     assertValidWorldName,
     defaultProjectWorldSourcePath,
     resolveProjectWorldSourceDirectory,
     resolveSelectedWorld,
     usesDefaultWorldSourcePath,
 } from "../world.js";
+import {
+    exportWorldImage,
+    normalizeWorldImageDimension,
+    normalizeWorldImageFileName,
+    normalizeWorldImageScale,
+    resolveDefaultWorldImageOutputPath,
+} from "../world-image.js";
 
 type WorldSharedOptions = {
     debug?: boolean;
@@ -111,6 +119,12 @@ type WorldLevelDatDiffCommandOptions = WorldCommandOptions & {
 type WorldLevelDatEditCommandOptions = WorldCommandOptions & {
     backup?: boolean;
     path?: string;
+};
+type WorldImageCommandOptions = WorldCommandOptions & {
+    output?: string;
+    dimension?: string;
+    scale?: string | number;
+    timings?: boolean;
 };
 
 type WorldPushConflictChoice = "cancel" | "push-anyway";
@@ -903,6 +917,84 @@ export async function runWorldLevelDatEditCommand(
     console.log(
         `[world] Saved ${result.changedPaths.length} level.dat change(s) for "${target.worldName}".${backupSuffix}`,
     );
+}
+
+export async function runWorldImageCommand(
+    requestedWorldName: string | undefined,
+    options: WorldImageCommandOptions,
+): Promise<void> {
+    const { projectRoot, config } = await loadBlurConfig(process.cwd());
+    const debug = createDebugLogger(resolveDebugEnabled(options.debug));
+    const selectedWorld = resolveSelectedWorld(config, requestedWorldName);
+    const dimension = normalizeWorldImageDimension(
+        options.dimension ?? config.package.assets.worldImage.dimension,
+        "dimension",
+    );
+    const scale = normalizeWorldImageScale(
+        options.scale ?? config.package.assets.worldImage.scale,
+        "scale",
+    );
+    const fileName = normalizeWorldImageFileName(
+        config.package.assets.worldImage.fileName,
+        "package.assets.worldImage.fileName",
+    );
+    const outputPath = path.resolve(
+        projectRoot,
+        options.output ??
+            path.relative(
+                projectRoot,
+                resolveDefaultWorldImageOutputPath(
+                    projectRoot,
+                    selectedWorld.worldName,
+                    fileName,
+                ),
+            ),
+    );
+
+    let worldSourceDirectory: string;
+    try {
+        worldSourceDirectory = await assertValidProjectWorldSource(
+            projectRoot,
+            selectedWorld.worldSourcePath,
+            "export a world image",
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+            appendWorldSourceHint(config, selectedWorld.worldName, message),
+        );
+    }
+
+    debug.log("world", "exporting 2D world image", {
+        worldName: selectedWorld.worldName,
+        worldSourcePath: selectedWorld.worldSourcePath,
+        dimension,
+        scale,
+        outputPath,
+    });
+
+    if (options.timings) {
+        console.log("[world] Image export timings:");
+    }
+    const exported = await exportWorldImage({
+        worldSourceDirectory,
+        outputPath,
+        dimension,
+        scale,
+        onTimingStage: options.timings
+            ? (stage) => {
+                  console.log(`[world]   ${stage.name}: ${stage.ms}ms`);
+              }
+            : undefined,
+    });
+
+    const processedWorld = exported.processedWorld;
+    console.log(
+        `[world] Wrote ${exported.outputs.length} 2D world image PNGs for "${selectedWorld.worldName}" to ${path.relative(projectRoot, exported.outputPath)} with terrain, shade, and full variants (${exported.width}x${exported.height}, processed world ${processedWorld.width}x${processedWorld.height} blocks, x ${processedWorld.bounds.minX}..${processedWorld.bounds.maxX}, z ${processedWorld.bounds.minZ}..${processedWorld.bounds.maxZ}, ${exported.columnCount} loaded columns, ${exported.terrainColumnCount} terrain columns).`,
+    );
+    if (options.timings) {
+        console.log(`[world]   total: ${exported.timings.totalMs}ms`);
+    }
 }
 
 export async function runWorldListCommand(

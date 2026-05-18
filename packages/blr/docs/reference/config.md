@@ -20,6 +20,7 @@ Canonical build and package output belongs under `dist/`:
 
 - `dist/stage/` for staged build output consumed by `local-deploy`, `local-server`, and packaging
 - `dist/packages/` for packaged distributable artifacts
+- `dist/assets/` for generated reusable assets such as `blr world image` output
 
 CLI runtime/provisioning state belongs under `.blr/`.
 
@@ -235,6 +236,10 @@ Fields:
 - `defaultTarget`: default package target used when `blr package` is run without a target
 - `defaultTargets`: default package targets used when `blr package` is run without targets
 - `world.format`: raw world package archive format for the `world` package target
+- `assets.worldImage.enabled`: include generated 2D world image PNGs in the `assets` package target
+- `assets.worldImage.dimension`: world dimension rendered for generated asset images
+- `assets.worldImage.scale`: integer pixel scale used for generated asset images
+- `assets.worldImage.fileName`: primary loaded-columns PNG file name used inside generated asset output
 - `worldTemplate.include.behaviorPack`: include the behavior pack in package targets that embed staged packs
 - `worldTemplate.include.resourcePack`: include the resource pack in package targets that embed staged packs
 
@@ -246,6 +251,7 @@ Supported package target values:
 - `behavior-pack`
 - `resource-pack`
 - `world`
+- `assets`
 
 Supported `world.format` values:
 
@@ -265,6 +271,16 @@ Behavior:
   - resource pack present -> resource pack included by default
 - `behavior-pack` and `resource-pack` produce standalone `.mcpack` files and ignore `worldTemplate.include.*`
 - `world` produces a raw world archive named `dist/packages/<worldName>-world.<format>` and ignores `worldTemplate.include.*`
+- `assets` produces `dist/packages/assets.zip` with an `assets.json` manifest
+- `assets.worldImage.enabled` defaults to `true`
+- when `assets.worldImage.enabled` is `true`, `assets` reads the selected project world source and writes `worlds/<worldName>/<fileName>` plus sibling terrain, shade, full, and terrain audit files inside the archive
+- generated world image PNGs read Bedrock LevelDB `Data3D` records for loaded-column coverage and biome tinting plus `SubChunkPrefix` records for terrain colors from a temporary copy of `<worldSourcePath>/db`
+- the primary PNG is a loaded-columns image with opaque pixels where a known column exists
+- the sibling variants are `<stem>.terrain.png` for top-down terrain colors, `<stem>.shade.png` for local-height-difference shading, and `<stem>.full.png` for terrain colors multiplied by shading
+- the sibling audit is `<stem>.terrain.audit.json` for processed world bounds, block dimensions, image dimensions, actual top-column block counts, tint counts, fallback counts, and unknown-block counts
+- `assets.worldImage.dimension` defaults to `overworld`
+- `assets.worldImage.scale` defaults to `1`
+- `assets.worldImage.fileName` defaults to `map.png`
 - these defaults can be narrowed per run with:
   - `--include-behavior-pack`
   - `--include-resource-pack`
@@ -476,6 +492,10 @@ Config-backed overrides:
   - `package.defaultTarget` -> `BLR_PACKAGE_DEFAULTTARGET`
   - `package.defaultTargets` -> `BLR_PACKAGE_DEFAULTTARGETS`
   - `package.world.format` -> `BLR_PACKAGE_WORLD_FORMAT`
+  - `package.assets.worldImage.enabled` -> `BLR_PACKAGE_ASSETS_WORLDIMAGE_ENABLED`
+  - `package.assets.worldImage.dimension` -> `BLR_PACKAGE_ASSETS_WORLDIMAGE_DIMENSION`
+  - `package.assets.worldImage.scale` -> `BLR_PACKAGE_ASSETS_WORLDIMAGE_SCALE`
+  - `package.assets.worldImage.fileName` -> `BLR_PACKAGE_ASSETS_WORLDIMAGE_FILENAME`
 - array fields accept comma-separated or newline-separated values
 - invalid boolean or numeric env values fail fast instead of silently falling back
 

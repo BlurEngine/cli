@@ -45,7 +45,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "lint": "npm run typecheck && npm run typecheck:test",
-    "test": "node --import tsx --test test/**/*.test.ts",
+    "test": "node --import tsx --test test/**/*.test.ts scripts/**/*.test.mjs",
+    "generate:terrain-colors": "node ./scripts/generate-terrain-colors.mjs",
+    "check:terrain-colors": "node ./scripts/generate-terrain-colors.mjs --check",
     "pack:dry-run": "npm pack --dry-run",
     "pack:smoke": "node ./scripts/pack-smoke.mjs",
     "check": "npm run lint && npm run test && npm run pack:smoke"
@@ -54,20 +56,24 @@
     "node": ">=22.12.0"
   },
   "dependencies": {
+    "@8crafter/leveldb-zlib": "^1.6.0",
     "@aws-sdk/client-s3": "3.1045.0",
     "adm-zip": "^0.5.17",
     "chokidar": "^5.0.0",
     "commander": "^14.0.3",
     "esbuild": "^0.28.0",
     "kleur": "^4.1.5",
+    "mcbe-leveldb": "^1.15.0",
     "node-pty": "^1.1.0",
     "picomatch": "^4.0.4",
+    "pngjs": "^7.0.0",
     "prismarine-nbt": "^2.8.0",
     "prompts": "^2.4.2",
     "sisteransi": "^1.0.5"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
+    "@types/pngjs": "^6.0.5",
     "ts-json-schema-generator": "^2.4.0"
   }
 }

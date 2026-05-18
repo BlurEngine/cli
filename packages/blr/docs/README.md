@@ -14,6 +14,7 @@ This is the canonical reference set for the `blr` tool and the projects it gener
 - [Bedrock TypeScript Standard](./standards/bedrock-typescript.md)
 - [Bedrock Project Structure](./standards/bedrock-project-structure.md)
 - [Bedrock Review Checklist](./standards/bedrock-review-checklist.md)
+- [World Image Rendering Standard](./standards/world-image-rendering.md)
 
 ## Scope
 

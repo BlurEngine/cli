@@ -30,6 +30,7 @@ import type {
     PackManifestConfig,
     PermissionLevel,
     VersionTuple,
+    WorldImageDimension,
     WorldPackageFormat,
     WorldBackend,
     WorldSyncProjectMode,
@@ -146,6 +147,23 @@ function ensureWorldPackageFormat(
     return isWorldPackageFormat(value) ? value : fallback;
 }
 
+function ensureWorldImageDimension(
+    value: unknown,
+    fallback: WorldImageDimension,
+): WorldImageDimension {
+    return value === "overworld" || value === "nether" || value === "end"
+        ? value
+        : fallback;
+}
+
+function ensureWorldImageScale(value: unknown, fallback: number): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 16) {
+        return fallback;
+    }
+    return parsed;
+}
+
 function ensureMinecraftChannel(
     value: unknown,
     fallback: MinecraftChannel,
@@ -212,6 +230,14 @@ function coerceBlurConfigFile(
     const worldS3 = (world.s3 ?? {}) as Record<string, unknown>;
     const packageConfig = (raw.package ?? {}) as Record<string, unknown>;
     const packageWorld = (packageConfig.world ?? {}) as Record<string, unknown>;
+    const packageAssets = (packageConfig.assets ?? {}) as Record<
+        string,
+        unknown
+    >;
+    const packageAssetsWorldImage = (packageAssets.worldImage ?? {}) as Record<
+        string,
+        unknown
+    >;
     const packageWorldTemplate = (packageConfig.worldTemplate ?? {}) as Record<
         string,
         unknown
@@ -317,6 +343,29 @@ function coerceBlurConfigFile(
                     packageWorld.format,
                     DEFAULT_WORLD_PACKAGE_FORMAT,
                 ),
+            },
+            assets: {
+                worldImage: {
+                    enabled:
+                        typeof packageAssetsWorldImage.enabled === "boolean"
+                            ? packageAssetsWorldImage.enabled
+                            : undefined,
+                    dimension: ensureWorldImageDimension(
+                        packageAssetsWorldImage.dimension,
+                        "overworld",
+                    ),
+                    scale:
+                        typeof packageAssetsWorldImage.scale !== "undefined"
+                            ? ensureWorldImageScale(
+                                  packageAssetsWorldImage.scale,
+                                  1,
+                              )
+                            : undefined,
+                    fileName: ensureString(
+                        packageAssetsWorldImage.fileName,
+                        "",
+                    ),
+                },
             },
         },
         runtime: {
@@ -824,6 +873,27 @@ export async function loadBlurConfig(
                     configFile.package?.world?.format,
                     DEFAULT_WORLD_PACKAGE_FORMAT,
                 ),
+            },
+            assets: {
+                worldImage: {
+                    enabled: ensureBoolean(
+                        configFile.package?.assets?.worldImage?.enabled,
+                        true,
+                    ),
+                    dimension: ensureWorldImageDimension(
+                        configFile.package?.assets?.worldImage?.dimension,
+                        "overworld",
+                    ),
+                    scale: ensureWorldImageScale(
+                        configFile.package?.assets?.worldImage?.scale,
+                        1,
+                    ),
+                    fileName:
+                        ensureString(
+                            configFile.package?.assets?.worldImage?.fileName,
+                            "",
+                        ) || "map.png",
+                },
             },
         },
     };

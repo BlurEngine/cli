@@ -9,6 +9,7 @@ export const SUPPORTED_PACKAGE_TARGETS = [
     "behavior-pack",
     "resource-pack",
     "world",
+    "assets",
 ] as const satisfies readonly PackageTarget[];
 
 export const PACKAGE_TARGETS_REQUIRING_WORLD = [

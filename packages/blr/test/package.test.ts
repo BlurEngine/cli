@@ -6,6 +6,10 @@ import { gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
 import { runPackageCommand } from "../src/commands/package.js";
 import { createTempDirectory, writeJsonFile } from "./helpers.js";
+import {
+    createBedrockHeightmapDb,
+    createBedrockTerrainDb,
+} from "./world-image-helpers.js";
 
 function createBehaviorManifest() {
     return {
@@ -207,7 +211,7 @@ test("runPackageCommand rejects the legacy world-template target", async (t) => 
 
     await assert.rejects(
         () => runPackageForTest(projectRoot, "world-template"),
-        /Unsupported package target "world-template"\. Supported targets: mctemplate, mcworld, mcaddon, behavior-pack, resource-pack, world\./,
+        /Unsupported package target "world-template"\. Supported targets: mctemplate, mcworld, mcaddon, behavior-pack, resource-pack, world, assets\./,
     );
 });
 
@@ -434,6 +438,105 @@ test("runPackageCommand creates configured zip raw world archives", async (t) =>
         false,
     );
     assert.equal(entries.includes("world_behavior_packs.json"), false);
+});
+
+test("runPackageCommand creates assets archives with a world image", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot);
+    await createBedrockHeightmapDb(
+        path.join(projectRoot, "worlds", "Bedrock level", "db"),
+        [{ chunkX: 0, chunkZ: 0, baseHeight: 64 }],
+    );
+    await createBedrockTerrainDb(
+        path.join(projectRoot, "worlds", "Bedrock level", "db"),
+        [
+            {
+                chunkX: 0,
+                chunkZ: 0,
+                subChunkY: 4,
+                blockName: "minecraft:stone",
+                localX: 0,
+                localY: 0,
+                localZ: 0,
+            },
+        ],
+    );
+
+    await runPackageForTest(projectRoot, "assets");
+
+    const outputFile = path.join(projectRoot, "dist", "packages", "assets.zip");
+    const archive = new AdmZip(outputFile);
+    const entries = archive
+        .getEntries()
+        .map((entry) => entry.entryName)
+        .sort();
+    const imageEntry = archive.getEntry("worlds/Bedrock level/map.png");
+
+    assert.ok(entries.includes("assets.json"));
+    assert.ok(entries.includes("worlds/Bedrock level/map.png"));
+    assert.ok(entries.includes("worlds/Bedrock level/map.terrain.png"));
+    assert.ok(entries.includes("worlds/Bedrock level/map.shade.png"));
+    assert.ok(entries.includes("worlds/Bedrock level/map.full.png"));
+    assert.ok(entries.includes("worlds/Bedrock level/map.terrain.audit.json"));
+    assert.deepEqual(
+        imageEntry?.getData().subarray(0, 8),
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+    const manifest = JSON.parse(
+        archive.getEntry("assets.json")?.getData().toString("utf8") ?? "{}",
+    );
+    assert.deepEqual(
+        manifest.assets.map(
+            (asset: { variant: string; path: string }) =>
+                `${asset.variant}:${asset.path}`,
+        ),
+        [
+            "loaded-columns:worlds/Bedrock level/map.png",
+            "shade:worlds/Bedrock level/map.shade.png",
+            "terrain:worlds/Bedrock level/map.terrain.png",
+            "full:worlds/Bedrock level/map.full.png",
+        ],
+    );
+    const terrainAsset = manifest.assets.find(
+        (asset: { variant: string }) => asset.variant === "terrain",
+    );
+    assert.deepEqual(terrainAsset?.processedWorld, {
+        dimension: "overworld",
+        bounds: { minX: 0, maxX: 15, minZ: 0, maxZ: 15 },
+        width: 16,
+        height: 16,
+        scale: 1,
+        image: { width: 16, height: 16 },
+        topY: { min: 64, max: 64 },
+    });
+    assert.equal(terrainAsset?.terrainColumnCount, 1);
+    assert.deepEqual(terrainAsset?.terrainDiagnostics, {
+        parseErrors: 0,
+        emptyColumns: 255,
+    });
+});
+
+test("runPackageCommand creates assets archives without requiring a world when world image is disabled", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, {
+        world: false,
+        packageConfig: {
+            assets: {
+                worldImage: {
+                    enabled: false,
+                },
+            },
+        },
+    });
+
+    await runPackageForTest(projectRoot, "assets");
+
+    assert.deepEqual(
+        readZipEntryNames(
+            path.join(projectRoot, "dist", "packages", "assets.zip"),
+        ),
+        ["assets.json"],
+    );
 });
 
 test("runPackageCommand lets CLI world format override config", async (t) => {

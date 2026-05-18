@@ -159,6 +159,10 @@
         "world": {
           "$ref": "#/definitions/BlurConfigPackageWorldFile",
           "description": "Raw project-world packaging defaults."
+        },
+        "assets": {
+          "$ref": "#/definitions/BlurConfigPackageAssetsFile",
+          "description": "Generated reusable asset package defaults."
         }
       },
       "additionalProperties": false,
@@ -172,7 +176,8 @@
         "mcaddon",
         "behavior-pack",
         "resource-pack",
-        "world"
+        "world",
+        "assets"
       ]
     },
     "BlurConfigPackageWorldTemplateFile": {
@@ -215,6 +220,44 @@
     "WorldPackageFormat": {
       "type": "string",
       "enum": ["tar.gz", "zip", "mcworld"]
+    },
+    "BlurConfigPackageAssetsFile": {
+      "type": "object",
+      "properties": {
+        "worldImage": {
+          "$ref": "#/definitions/BlurConfigPackageAssetsWorldImageFile",
+          "description": "Generated 2D world image settings."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Generated reusable asset package defaults."
+    },
+    "BlurConfigPackageAssetsWorldImageFile": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the `assets` package target should include generated 2D world image PNGs."
+        },
+        "dimension": {
+          "$ref": "#/definitions/WorldImageDimension",
+          "description": "World dimension to render for the generated image."
+        },
+        "scale": {
+          "type": "number",
+          "description": "Integer pixel scale applied to each world column."
+        },
+        "fileName": {
+          "type": "string",
+          "description": "File name used for the primary loaded-columns PNG inside assets output. Terrain, shade, and full variants are written beside it using the same stem."
+        }
+      },
+      "additionalProperties": false,
+      "description": "World image export defaults for generated asset archives."
+    },
+    "WorldImageDimension": {
+      "type": "string",
+      "enum": ["overworld", "nether", "end"]
     },
     "BlurConfigRuntimeFile": {
       "type": "object",
