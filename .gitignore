@@ -1,5 +1,8 @@
 node_modules/
 dist/
 .tmp-*
+.worktrees/
 .DS_Store
 npm-debug.log*
+.env.local
+.blr/
