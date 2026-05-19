@@ -1,5 +1,13 @@
 # @blurengine/cli
 
+## 0.10.0
+
+### Minor Changes
+
+- [`8464a69`](https://github.com/BlurEngine/cli/commit/8464a69933f7299ab47aa4eb51776921e335180a) Thanks [@SupaHam](https://github.com/SupaHam)! - Add Bedrock world image exports for loaded-column, terrain, shade, and full PNG outputs, plus terrain audit metadata and assets package manifest entries.
+
+- [`aa615a4`](https://github.com/BlurEngine/cli/commit/aa615a4b286e45bc82684179354bb9ae8ba44582) Thanks [@SupaHam](https://github.com/SupaHam)! - Add configurable raw world package layouts, including the `com` layout that writes world files under `worlds/world/` while keeping `bedrock-root` as the default.
+
 ## 0.9.1
 
 ### Patch Changes
