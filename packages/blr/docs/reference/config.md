@@ -236,6 +236,7 @@ Fields:
 - `defaultTarget`: default package target used when `blr package` is run without a target
 - `defaultTargets`: default package targets used when `blr package` is run without targets
 - `world.format`: raw world package archive format for the `world` package target
+- `world.layout`: raw world package archive entry layout for the `world` package target
 - `assets.worldImage.enabled`: include generated 2D world image PNGs in the `assets` package target
 - `assets.worldImage.dimension`: world dimension rendered for generated asset images
 - `assets.worldImage.scale`: integer pixel scale used for generated asset images
@@ -259,6 +260,11 @@ Supported `world.format` values:
 - `zip`
 - `mcworld`
 
+Supported `world.layout` values:
+
+- `bedrock-root`: package world files at the archive root
+- `com`: package world files under `worlds/world/`
+
 Behavior:
 
 - if `blr package <targets...>` is passed explicitly, those targets win
@@ -266,11 +272,15 @@ Behavior:
 - if targets are omitted and `package.defaultTargets` is not set, `blr` uses `package.defaultTarget` when present
 - if targets are omitted and no config default exists, `blr` uses `mctemplate`
 - `world.format` defaults to `tar.gz`
+- `world.layout` defaults to `bedrock-root`
+- `world.format` controls the archive file type; `world.layout` controls the archive entry shape
 - `worldTemplate.include.*` defaults follow project feature presence for `mctemplate`, `mcworld`, and `mcaddon`:
   - behavior pack present -> behavior pack included by default
   - resource pack present -> resource pack included by default
 - `behavior-pack` and `resource-pack` produce standalone `.mcpack` files and ignore `worldTemplate.include.*`
 - `world` produces a raw world archive named `dist/packages/<worldName>-world.<format>` and ignores `worldTemplate.include.*`
+- with `world.layout: "bedrock-root"`, raw world files are written at archive root, such as `db/CURRENT` and `levelname.txt`
+- with `world.layout: "com"`, raw world files are written under `worlds/world/`, such as `worlds/world/db/CURRENT` and `worlds/world/levelname.txt`
 - `assets` produces `dist/packages/assets.zip` with an `assets.json` manifest
 - `assets.worldImage.enabled` defaults to `true`
 - when `assets.worldImage.enabled` is `true`, `assets` reads the selected project world source and writes `worlds/<worldName>/<fileName>` plus sibling terrain, shade, full, and terrain audit files inside the archive
@@ -492,6 +502,7 @@ Config-backed overrides:
   - `package.defaultTarget` -> `BLR_PACKAGE_DEFAULTTARGET`
   - `package.defaultTargets` -> `BLR_PACKAGE_DEFAULTTARGETS`
   - `package.world.format` -> `BLR_PACKAGE_WORLD_FORMAT`
+  - `package.world.layout` -> `BLR_PACKAGE_WORLD_LAYOUT`
   - `package.assets.worldImage.enabled` -> `BLR_PACKAGE_ASSETS_WORLDIMAGE_ENABLED`
   - `package.assets.worldImage.dimension` -> `BLR_PACKAGE_ASSETS_WORLDIMAGE_DIMENSION`
   - `package.assets.worldImage.scale` -> `BLR_PACKAGE_ASSETS_WORLDIMAGE_SCALE`

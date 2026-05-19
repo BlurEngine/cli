@@ -8,6 +8,7 @@ export type MinecraftChannel = "stable" | "preview";
 export type WorldSyncProjectMode = "prompt" | "auto" | "manual";
 export type WorldSyncRuntimeMode = "prompt" | "preserve" | "replace" | "backup";
 export type WorldPackageFormat = "tar.gz" | "zip" | "mcworld";
+export type WorldPackageLayout = "bedrock-root" | "com";
 export type WorldImageDimension = "overworld" | "nether" | "end";
 
 export type MinecraftProduct =
@@ -137,6 +138,10 @@ export interface BlurConfigPackageWorldFile {
      * Archive format used by the `world` package target.
      */
     format?: WorldPackageFormat;
+    /**
+     * Archive entry layout used by the `world` package target.
+     */
+    layout?: WorldPackageLayout;
 }
 
 /**
@@ -512,6 +517,7 @@ export interface BlurProject {
         defaultTargets?: PackageTarget[];
         world: {
             format: WorldPackageFormat;
+            layout: WorldPackageLayout;
         };
         assets: {
             worldImage: {

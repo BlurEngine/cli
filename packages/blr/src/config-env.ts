@@ -22,6 +22,7 @@ const CONFIG_ENV_SPECS: ConfigEnvSpec[] = [
     { path: ["package", "defaultTarget"], kind: "string" },
     { path: ["package", "defaultTargets"], kind: "stringArray" },
     { path: ["package", "world", "format"], kind: "string" },
+    { path: ["package", "world", "layout"], kind: "string" },
     { path: ["package", "assets", "worldImage", "enabled"], kind: "boolean" },
     { path: ["package", "assets", "worldImage", "dimension"], kind: "string" },
     { path: ["package", "assets", "worldImage", "scale"], kind: "number" },

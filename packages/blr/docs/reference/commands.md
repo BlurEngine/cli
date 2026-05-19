@@ -300,7 +300,9 @@ Currently supported targets:
 - skips backup and noise files such as `.gitkeep`, `.DS_Store`, `Thumbs.db`, `.world_backups`, `worlds_backups`, `*.blr-backup-*`, `*.bak`, `*.tmp`, and timestamped world backup directories
 - writes `dist/packages/<worldName>-world.tar.gz` by default
 - supports `tar.gz`, `zip`, and `mcworld` world package formats
-- uses the same archive structure for every format, with the Bedrock world files at the archive root
+- uses `package.world.layout` to choose the archive entry shape
+- `package.world.layout: "bedrock-root"` writes Bedrock world files at the archive root, such as `db/CURRENT` and `levelname.txt`
+- `package.world.layout: "com"` writes Bedrock world files under `worlds/world/`, such as `worlds/world/db/CURRENT` and `worlds/world/levelname.txt`
 - requires the project world source to contain a valid Bedrock world (`db/` directory)
 - if `world.backend` is `s3`, pull the world first with `blr world pull`
 

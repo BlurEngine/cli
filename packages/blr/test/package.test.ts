@@ -440,6 +440,33 @@ test("runPackageCommand creates configured zip raw world archives", async (t) =>
     assert.equal(entries.includes("world_behavior_packs.json"), false);
 });
 
+test("runPackageCommand creates com layout raw world archives", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, {
+        packageConfig: {
+            world: {
+                format: "zip",
+                layout: "com",
+            },
+        },
+    });
+    const worldRoot = path.join(projectRoot, "worlds", "Bedrock level");
+    await writeFile(path.join(worldRoot, ".gitkeep"), "");
+    await writeFile(path.join(worldRoot, "db", "CURRENT.bak"), "");
+
+    await runPackageForTest(projectRoot, "world");
+
+    const entries = readZipEntryNames(
+        path.join(projectRoot, "dist", "packages", "Bedrock level-world.zip"),
+    );
+    assert.ok(entries.includes("worlds/world/db/CURRENT"));
+    assert.ok(entries.includes("worlds/world/levelname.txt"));
+    assert.equal(entries.includes("db/CURRENT"), false);
+    assert.equal(entries.includes("levelname.txt"), false);
+    assert.equal(entries.includes("worlds/world/.gitkeep"), false);
+    assert.equal(entries.includes("worlds/world/db/CURRENT.bak"), false);
+});
+
 test("runPackageCommand creates assets archives with a world image", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-package-");
     await createPackageProject(projectRoot);

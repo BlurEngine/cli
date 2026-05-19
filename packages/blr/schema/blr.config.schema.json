@@ -212,6 +212,10 @@
         "format": {
           "$ref": "#/definitions/WorldPackageFormat",
           "description": "Archive format used by the `world` package target."
+        },
+        "layout": {
+          "$ref": "#/definitions/WorldPackageLayout",
+          "description": "Archive entry layout used by the `world` package target."
         }
       },
       "additionalProperties": false,
@@ -220,6 +224,10 @@
     "WorldPackageFormat": {
       "type": "string",
       "enum": ["tar.gz", "zip", "mcworld"]
+    },
+    "WorldPackageLayout": {
+      "type": "string",
+      "enum": ["bedrock-root", "com"]
     },
     "BlurConfigPackageAssetsFile": {
       "type": "object",

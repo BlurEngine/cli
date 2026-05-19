@@ -33,6 +33,7 @@ import type {
     PackageTarget,
     VersionTuple,
     WorldPackageFormat,
+    WorldPackageLayout,
 } from "../types.js";
 import {
     appendWorldSourceHint,
@@ -367,6 +368,7 @@ async function packageRawWorldTarget(
     worldName: string,
     worldSourcePath: string,
     format: WorldPackageFormat,
+    layout: WorldPackageLayout,
 ): Promise<{
     workspaceRoot: string;
     outputFile: string;
@@ -380,9 +382,13 @@ async function packageRawWorldTarget(
 
     await removeDirectory(workspaceRoot);
     await ensureDirectory(artifacts.packagesRoot);
+    const worldWorkspaceRoot =
+        layout === "com"
+            ? path.join(workspaceRoot, "worlds", "world")
+            : workspaceRoot;
     await copyRawWorldPackageDirectory(
         resolveProjectWorldSourceDirectory(projectRoot, worldSourcePath),
-        workspaceRoot,
+        worldWorkspaceRoot,
     );
     await removeDirectory(outputFile);
     await writeWorldPackageArchive(workspaceRoot, outputFile, format);
@@ -833,6 +839,7 @@ export async function runPackageCommand(
                       selectedWorld.worldName,
                       selectedWorld.worldSourcePath,
                       worldPackageFormat,
+                      config.package.world.layout,
                   )
                 : target === "assets"
                   ? await packageAssetsTarget(

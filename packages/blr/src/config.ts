@@ -31,6 +31,7 @@ import type {
     PermissionLevel,
     VersionTuple,
     WorldImageDimension,
+    WorldPackageLayout,
     WorldPackageFormat,
     WorldBackend,
     WorldSyncProjectMode,
@@ -145,6 +146,13 @@ function ensureWorldPackageFormat(
     fallback: WorldPackageFormat,
 ): WorldPackageFormat {
     return isWorldPackageFormat(value) ? value : fallback;
+}
+
+function ensureWorldPackageLayout(
+    value: unknown,
+    fallback: WorldPackageLayout,
+): WorldPackageLayout {
+    return value === "bedrock-root" || value === "com" ? value : fallback;
 }
 
 function ensureWorldImageDimension(
@@ -342,6 +350,10 @@ function coerceBlurConfigFile(
                 format: ensureWorldPackageFormat(
                     packageWorld.format,
                     DEFAULT_WORLD_PACKAGE_FORMAT,
+                ),
+                layout: ensureWorldPackageLayout(
+                    packageWorld.layout,
+                    "bedrock-root",
                 ),
             },
             assets: {
@@ -872,6 +884,10 @@ export async function loadBlurConfig(
                 format: ensureWorldPackageFormat(
                     configFile.package?.world?.format,
                     DEFAULT_WORLD_PACKAGE_FORMAT,
+                ),
+                layout: ensureWorldPackageLayout(
+                    configFile.package?.world?.layout,
+                    "bedrock-root",
                 ),
             },
             assets: {

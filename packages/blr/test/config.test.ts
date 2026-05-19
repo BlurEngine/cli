@@ -212,6 +212,24 @@ test("loadBlurConfig accepts package.world.format", async (t) => {
 
     const { config } = await loadBlurConfig(projectRoot);
     assert.equal(config.package.world.format, "zip");
+    assert.equal(config.package.world.layout, "bedrock-root");
+});
+
+test("loadBlurConfig accepts package.world.layout", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        package: {
+            world: {
+                layout: "com",
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.package.world.layout, "com");
 });
 
 test("loadBlurConfig accepts package.assets.worldImage options", async (t) => {
@@ -266,6 +284,33 @@ test("loadBlurConfig respects environment overrides for package world format", a
 
     const { config } = await loadBlurConfig(projectRoot);
     assert.equal(config.package.world.format, "mcworld");
+});
+
+test("loadBlurConfig respects environment overrides for package world layout", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        package: {
+            world: {
+                layout: "bedrock-root",
+            },
+        },
+    });
+
+    const previousWorldLayout = process.env.BLR_PACKAGE_WORLD_LAYOUT;
+    process.env.BLR_PACKAGE_WORLD_LAYOUT = "com";
+    t.after(() => {
+        if (typeof previousWorldLayout === "undefined") {
+            delete process.env.BLR_PACKAGE_WORLD_LAYOUT;
+            return;
+        }
+        process.env.BLR_PACKAGE_WORLD_LAYOUT = previousWorldLayout;
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.package.world.layout, "com");
 });
 
 test("loadBlurConfig respects environment overrides for package defaultTargets", async (t) => {
