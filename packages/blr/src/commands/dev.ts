@@ -25,6 +25,7 @@ import { loadBlurConfig } from "../config.js";
 import { createDebugLogger, resolveDebugEnabled } from "../debug.js";
 import { resolveMachineSettings } from "../environment.js";
 import { BLR_CONFIG_FILE, BLR_ENV_BDS_VERSION } from "../constants.js";
+import { LinkServer } from "../link-server.js";
 import {
     applyMinecraftTargetVersion,
     resolveConfiguredMinecraftTargetVersionSource,
@@ -140,6 +141,12 @@ type DevInteractiveSelectionResult = {
 type DevInteractiveHooks = {
     onLocalServerSelected?: () => Promise<DevInteractiveSelectionResult | void>;
     onLocalServerConfirmed?: () => Promise<void>;
+};
+
+type LocalServerLinkOptions = {
+    host: string;
+    port: number;
+    dashboardEnabled: boolean;
 };
 
 type TrackedTask<T> = {
@@ -1239,6 +1246,21 @@ function hasActiveDevTargets(options: DevResolvedOptions): boolean {
     return options.localDeploy || options.localServer || options.watchScripts;
 }
 
+export function resolveLocalServerLinkOptions(
+    config: BlurProject,
+    localServerSelected: boolean,
+): LocalServerLinkOptions | undefined {
+    if (!localServerSelected || !config.dev.localServer.link.enabled) {
+        return undefined;
+    }
+
+    return {
+        host: config.dev.localServer.link.host,
+        port: config.dev.localServer.link.port,
+        dashboardEnabled: config.dev.localServer.link.dashboard.enabled,
+    };
+}
+
 function filterScriptWatchPatterns(
     patterns: string[],
     worldSourcePath: string,
@@ -1669,6 +1691,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         );
     let machine: ReturnType<typeof resolveMachineSettings> | undefined;
     let localServerPrefetchTask: TrackedTask<unknown> | undefined;
+    let linkServer: LinkServer | undefined;
     const localServerProgressReporter = createLocalServerProgressReporter();
     const localDeployDefaults = resolvePackFeatureSelection(
         config.automation.localDeploy.copy,
@@ -2142,6 +2165,25 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         });
     }
 
+    const linkOptions = resolveLocalServerLinkOptions(
+        config,
+        resolved.localServer,
+    );
+    if (linkOptions) {
+        linkServer = new LinkServer(linkOptions);
+        try {
+            await linkServer.start();
+            console.log(`[dev] Link server listening at ${linkServer.url}.`);
+        } catch (error) {
+            linkServer = undefined;
+            const message =
+                error instanceof Error ? error.message : String(error);
+            console.log(
+                `[dev] Warning: Link server could not start (${message}). Continuing without Link.`,
+            );
+        }
+    }
+
     if (resolved.localServer && resolved.watchWorld) {
         await writeLocalServerSession(projectRoot, {
             processId: process.pid,
@@ -2285,6 +2327,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             if (options.stopServer !== false && localServer) {
                 await localServer.stop({ suppressExitNotification: true });
             }
+            await linkServer?.stop();
 
             await flushRuntimeState();
             await clearLocalServerSession(projectRoot);
@@ -2319,6 +2362,14 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         await buildProject(projectRoot, config, {
             production: resolved.production,
             debug,
+            link: linkServer
+                ? {
+                      baseUrl: linkServer.url,
+                      logReady: true,
+                  }
+                : {
+                      enabled: !resolved.localServer,
+                  },
         });
         console.log("[dev] build completed.");
 
@@ -2473,11 +2524,19 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         return;
     }
 
+    const stopLinkServerIfLocalServerIsIdle = async () => {
+        if (!localServer?.isRunning()) {
+            await linkServer?.stop();
+        }
+    };
+
     if (!resolved.watch) {
+        await stopLinkServerIfLocalServerIsIdle();
         return;
     }
 
     if (!hasActiveDevTargets(resolved)) {
+        await stopLinkServerIfLocalServerIsIdle();
         return;
     }
 
@@ -2733,6 +2792,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     }
 
     if (watchers.size === 0) {
+        await stopLinkServerIfLocalServerIsIdle();
         return;
     }
 

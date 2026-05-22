@@ -5,6 +5,7 @@ import test from "node:test";
 import { gunzipSync } from "node:zlib";
 import AdmZip from "adm-zip";
 import { runPackageCommand } from "../src/commands/package.js";
+import { exists } from "../src/fs.js";
 import { createTempDirectory, writeJsonFile } from "./helpers.js";
 import {
     createBedrockHeightmapDb,
@@ -26,6 +27,32 @@ function createBehaviorManifest() {
                 type: "data",
                 uuid: "22222222-2222-2222-2222-222222222222",
                 version: [1, 2, 3],
+            },
+        ],
+    };
+}
+
+function createScriptBehaviorManifest() {
+    return {
+        ...createBehaviorManifest(),
+        modules: [
+            ...createBehaviorManifest().modules,
+            {
+                type: "script",
+                language: "javascript",
+                uuid: "55555555-5555-5555-5555-555555555555",
+                version: [1, 2, 3],
+                entry: "scripts/main.js",
+            },
+        ],
+        dependencies: [
+            {
+                module_name: "@minecraft/server",
+                version: "2.3.0",
+            },
+            {
+                module_name: "@minecraft/server-net",
+                version: "1.0.0-beta",
             },
         ],
     };
@@ -128,6 +155,12 @@ function readZipEntryNames(archivePath: string): string[] {
         .getEntries()
         .map((entry) => entry.entryName)
         .sort();
+}
+
+function readZipJsonEntry<T>(archivePath: string, entryName: string): T {
+    const entry = new AdmZip(archivePath).getEntry(entryName);
+    assert.notEqual(entry, null);
+    return JSON.parse(entry!.getData().toString("utf8")) as T;
 }
 
 async function readTarGzEntryNames(archivePath: string): Promise<string[]> {
@@ -268,6 +301,81 @@ test("runPackageCommand creates configured standalone pack outputs when target i
     );
     assert.equal(
         resourceEntries.includes("resource_packs/assets/manifest.json"),
+        false,
+    );
+});
+
+test("runPackageCommand packages behavior-pack target from the BDS staged variant", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, { world: false });
+    await writeJsonFile(
+        path.join(projectRoot, "behavior_packs", "game", "manifest.json"),
+        createScriptBehaviorManifest(),
+    );
+
+    await runPackageForTest(projectRoot, "behavior-pack");
+
+    const behaviorManifest = readZipJsonEntry<{
+        dependencies?: Array<{ module_name?: string }>;
+    }>(
+        path.join(projectRoot, "dist", "packages", "game-behavior.mcpack"),
+        "manifest.json",
+    );
+
+    assert.equal(
+        behaviorManifest.dependencies?.some(
+            (entry) => entry.module_name === "@minecraft/server-net",
+        ),
+        true,
+    );
+    assert.equal(
+        await exists(
+            path.join(
+                projectRoot,
+                "dist",
+                "packages",
+                "game-bds-behavior.mcpack",
+            ),
+        ),
+        false,
+    );
+});
+
+test("runPackageCommand maps the bds behavior package target alias to behavior-pack", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-package-");
+    await createPackageProject(projectRoot, { world: false });
+    await writeJsonFile(
+        path.join(projectRoot, "behavior_packs", "game", "manifest.json"),
+        createScriptBehaviorManifest(),
+    );
+
+    await runPackageForTest(projectRoot, "bds-behavior-pack");
+
+    const outputFile = path.join(
+        projectRoot,
+        "dist",
+        "packages",
+        "game-behavior.mcpack",
+    );
+    const behaviorManifest = readZipJsonEntry<{
+        dependencies?: Array<{ module_name?: string }>;
+    }>(outputFile, "manifest.json");
+
+    assert.equal(
+        behaviorManifest.dependencies?.some(
+            (entry) => entry.module_name === "@minecraft/server-net",
+        ),
+        true,
+    );
+    assert.equal(
+        await exists(
+            path.join(
+                projectRoot,
+                "dist",
+                "packages",
+                "game-bds-behavior.mcpack",
+            ),
+        ),
         false,
     );
 });

@@ -278,6 +278,7 @@ Behavior:
   - behavior pack present -> behavior pack included by default
   - resource pack present -> resource pack included by default
 - `behavior-pack` and `resource-pack` produce standalone `.mcpack` files and ignore `worldTemplate.include.*`
+- `behavior-pack` uses the BDS behavior-pack variant and keeps BDS-only script dependencies such as `@minecraft/server-net`
 - `world` produces a raw world archive named `dist/packages/<worldName>-world.<format>` and ignores `worldTemplate.include.*`
 - with `world.layout: "bedrock-root"`, raw world files are written at archive root, such as `db/CURRENT` and `levelname.txt`
 - with `world.layout: "com"`, raw world files are written under `worlds/world/`, such as `worlds/world/db/CURRENT` and `worlds/world/levelname.txt`
@@ -325,6 +326,10 @@ Notes:
 - projects without a runtime entry still build and stage pack content normally
 - script bundling is skipped until a runtime entry exists
 - runtime scripting requires a behavior pack to be present in the project
+- runtime builds produce separate offline and BDS script bundles from the same authored entry
+- direct `Link` calls imported from `@blurengine/bebe` are stripped from the offline bundle and kept in the BDS bundle
+- `blr` injects and owns the BDS Link transport in the BDS bundle; generated projects should use `Link` without manually installing the transport
+- dynamic Link usage such as assigning or destructuring `Link.event` or `Link.snapshot` fails the offline build with a clear error because `blr` cannot safely erase it
 
 ### `dev.watch`
 
@@ -398,6 +403,10 @@ Fields:
 - `operators`: optional XUID list when no `server/permissions.json` file exists
 - `defaultPermissionLevel`: server default permission level
 - `gamemode`: server default gamemode
+- `link.enabled`: start the local Link bridge server when `local-server` is active
+- `link.host`: host interface for the local Link bridge server
+- `link.port`: port for the local Link bridge server
+- `link.dashboard.enabled`: expose the built-in Link dashboard from the local Link bridge server
 - `worldSync.projectWorldMode`: `prompt | auto | manual`
 - `worldSync.runtimeWorldMode`: `prompt | preserve | replace | backup`
 
@@ -414,6 +423,10 @@ Defaults if omitted:
 - `attach.resourcePack`: follows project feature presence
 - `defaultPermissionLevel`: `operator`
 - `gamemode`: `creative`
+- `link.enabled`: `true`
+- `link.host`: `localhost`
+- `link.port`: `19144`
+- `link.dashboard.enabled`: `true`
 - `worldSync.projectWorldMode`: `prompt`
 - `worldSync.runtimeWorldMode`: `prompt`
 
@@ -427,6 +440,12 @@ Notes:
 - `compactScriptingLogs` only changes terminal output from the managed local server; BDS content-log settings remain enabled
 - `copy.*` controls whether the current project pack types are copied into the runtime server
 - `attach.*` controls whether the current project pack ids are written into world hook files
+- `link.*` controls only the local Link bridge server; if disabled or unavailable, BDS Link calls remain unavailable instead of blocking local-server startup
+- when `link.dashboard.enabled` is `true`, the Link server root URL serves a built-in dashboard backed by the same Link API
+- `Link.event(...)` and `Link.on(...)` own their availability checks, so authored code should call them directly; response flows should be handled as separate inbound events with `Link.on(...)`
+- projects own authored Link event names, payloads, and gameplay behavior; `link.*` controls the local bridge and built-in dashboard but does not define a project event schema
+- Bebe/`blr` own built-in Link smoke behavior such as `bebe.link.ready`, while the dashboard defaults to a generic `project.message` send event
+- the Link bridge assigns fixed-length base64 UUIDv7 event ids for replay and dedupe and exposes them through `event.meta`
 - if `server/server.properties` exists, `blr` overlays its authored properties onto the runtime BDS `server.properties` file before forcing the managed `level-name`, `allow-list`, permission, gamemode, and content-log settings needed for `blr dev`
 - if a pack type is disabled for copy or attach, `blr` removes only this project's corresponding staged/runtime output and preserves unrelated existing world pack entries
 - `worldSync.projectWorldMode` controls how `blr dev` handles remote project-world updates for versioned S3 worlds:
@@ -493,6 +512,10 @@ Config-backed overrides:
   - `minecraft.targetVersion` -> `BLR_MINECRAFT_TARGETVERSION`
   - `dev.localServer.worldName` -> `BLR_DEV_LOCALSERVER_WORLDNAME`
   - `dev.localServer.compactScriptingLogs` -> `BLR_DEV_LOCALSERVER_COMPACTSCRIPTINGLOGS`
+  - `dev.localServer.link.enabled` -> `BLR_DEV_LOCALSERVER_LINK_ENABLED`
+  - `dev.localServer.link.host` -> `BLR_DEV_LOCALSERVER_LINK_HOST`
+  - `dev.localServer.link.port` -> `BLR_DEV_LOCALSERVER_LINK_PORT`
+  - `dev.localServer.link.dashboard.enabled` -> `BLR_DEV_LOCALSERVER_LINK_DASHBOARD_ENABLED`
   - `dev.localServer.worldSync.projectWorldMode` -> `BLR_DEV_LOCALSERVER_WORLDSYNC_PROJECTWORLDMODE`
   - `dev.localServer.worldSync.runtimeWorldMode` -> `BLR_DEV_LOCALSERVER_WORLDSYNC_RUNTIMEWORLDMODE`
   - `dev.localDeploy.copy.behaviorPack` -> `BLR_DEV_LOCALDEPLOY_COPY_BEHAVIORPACK`

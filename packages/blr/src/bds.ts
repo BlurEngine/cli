@@ -1011,7 +1011,7 @@ async function copyBuiltArtifacts(
         : undefined;
 
     debug?.log("bds", "copying project artifacts into BDS", {
-        behaviorSource: artifacts.stageBehaviorPackDirectory,
+        behaviorSource: artifacts.stageBdsBehaviorPackDirectory,
         behaviorDestination,
         resourceSource: artifacts.stageResourcePackDirectory,
         resourceDestination,
@@ -1020,11 +1020,11 @@ async function copyBuiltArtifacts(
 
     if (
         copySelection.behaviorPack &&
-        artifacts.stageBehaviorPackDirectory &&
+        artifacts.stageBdsBehaviorPackDirectory &&
         behaviorDestination
     ) {
         await copyDirectory(
-            artifacts.stageBehaviorPackDirectory,
+            artifacts.stageBdsBehaviorPackDirectory,
             behaviorDestination,
         );
     } else if (behaviorDestination) {

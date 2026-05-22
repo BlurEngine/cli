@@ -177,7 +177,7 @@ test("runWorldPullCommand fails while the same world is being watched by an acti
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },

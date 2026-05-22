@@ -4,6 +4,8 @@ import {
     BLR_CONFIG_FILE,
     CURRENT_PROJECT_VERSION,
     DEFAULT_BDS_WORLD_NAME,
+    DEFAULT_LINK_SERVER_HOST,
+    DEFAULT_LINK_SERVER_PORT,
     DEFAULT_MINECRAFT_CHANNEL,
     DEFAULT_MINECRAFT_TARGET_VERSION,
     DEFAULT_EXTERNAL_MODULES,
@@ -18,7 +20,7 @@ import {
 } from "./constants.js";
 import { loadClosestDotEnvLocal } from "./env-file.js";
 import { exists, listDirectories, readJson } from "./fs.js";
-import { isPackageTarget } from "./package-targets.js";
+import { normalizePackageTarget } from "./package-targets.js";
 import { assertProjectRelativePath } from "./project-paths.js";
 import type {
     BlurConfigFile,
@@ -101,6 +103,14 @@ function ensureBoolean(value: unknown, fallback: boolean): boolean {
     return typeof value === "boolean" ? value : fallback;
 }
 
+function ensurePort(value: unknown, fallback: number): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+        return fallback;
+    }
+    return parsed;
+}
+
 function ensureStringArray(value: unknown, fallback: string[]): string[] {
     if (!Array.isArray(value)) return fallback;
     const entries = value.filter(
@@ -125,7 +135,7 @@ function ensurePermissionLevel(
 }
 
 function ensurePackageTarget(value: unknown): PackageTarget | undefined {
-    return isPackageTarget(value) ? value : undefined;
+    return normalizePackageTarget(value);
 }
 
 function ensurePackageTargets(value: unknown): PackageTarget[] | undefined {
@@ -133,9 +143,9 @@ function ensurePackageTargets(value: unknown): PackageTarget[] | undefined {
         return undefined;
     }
 
-    const targets = value.filter((entry): entry is PackageTarget =>
-        isPackageTarget(entry),
-    );
+    const targets = value
+        .map((entry) => normalizePackageTarget(entry))
+        .filter((entry): entry is PackageTarget => Boolean(entry));
     return targets.length > 0
         ? (dedupeStrings(targets) as PackageTarget[])
         : undefined;
@@ -253,6 +263,9 @@ function coerceBlurConfigFile(
     const watch = (dev.watch ?? {}) as Record<string, unknown>;
     const localDeploy = (dev.localDeploy ?? {}) as Record<string, unknown>;
     const localServer = (dev.localServer ?? {}) as Record<string, unknown>;
+    const localServerLink = (localServer.link ?? {}) as Record<string, unknown>;
+    const localServerLinkDashboard = (localServerLink.dashboard ??
+        {}) as Record<string, unknown>;
     const localServerWorldSync = (localServer.worldSync ?? {}) as Record<
         string,
         unknown
@@ -465,6 +478,27 @@ function coerceBlurConfigFile(
                     "operator",
                 ),
                 gamemode: ensureString(localServer.gamemode, ""),
+                link: {
+                    enabled:
+                        typeof localServerLink.enabled === "boolean"
+                            ? localServerLink.enabled
+                            : undefined,
+                    host: ensureString(localServerLink.host, ""),
+                    port:
+                        typeof localServerLink.port !== "undefined"
+                            ? ensurePort(
+                                  localServerLink.port,
+                                  DEFAULT_LINK_SERVER_PORT,
+                              )
+                            : undefined,
+                    dashboard: {
+                        enabled:
+                            typeof localServerLinkDashboard.enabled ===
+                            "boolean"
+                                ? localServerLinkDashboard.enabled
+                                : undefined,
+                    },
+                },
                 worldSync: {
                     projectWorldMode: ensureWorldSyncProjectMode(
                         localServerWorldSync.projectWorldMode,
@@ -819,6 +853,28 @@ export async function loadBlurConfig(
                 gamemode:
                     ensureString(configFile.dev?.localServer?.gamemode, "") ||
                     "creative",
+                link: {
+                    enabled: ensureBoolean(
+                        configFile.dev?.localServer?.link?.enabled,
+                        true,
+                    ),
+                    host:
+                        ensureString(
+                            configFile.dev?.localServer?.link?.host,
+                            "",
+                        ) || DEFAULT_LINK_SERVER_HOST,
+                    port: ensurePort(
+                        configFile.dev?.localServer?.link?.port,
+                        DEFAULT_LINK_SERVER_PORT,
+                    ),
+                    dashboard: {
+                        enabled: ensureBoolean(
+                            configFile.dev?.localServer?.link?.dashboard
+                                ?.enabled,
+                            true,
+                        ),
+                    },
+                },
                 worldSync: {
                     projectWorldMode: ensureWorldSyncProjectMode(
                         configFile.dev?.localServer?.worldSync

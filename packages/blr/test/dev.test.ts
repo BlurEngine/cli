@@ -9,6 +9,7 @@ import {
     mergePipelineModes,
     resolveRuntimeWorldDecision,
     resolveProjectWatchChangeAction,
+    resolveLocalServerLinkOptions,
     runDevCommand,
     resolveDevLocalServerVersionSource,
     shouldUseInteractiveDevConfiguration,
@@ -180,6 +181,38 @@ test("resolveDevLocalServerVersionSource reports cli bdsVersion when --bds-versi
         }),
         "cli-bds-version",
     );
+});
+
+test("resolveLocalServerLinkOptions follows local-server selection and config", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-dev-link-");
+    await createConfigLoadProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        dev: {
+            localServer: {
+                link: {
+                    enabled: true,
+                    host: "0.0.0.0",
+                    port: 19999,
+                    dashboard: {
+                        enabled: false,
+                    },
+                },
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(resolveLocalServerLinkOptions(config, true), {
+        host: "0.0.0.0",
+        port: 19999,
+        dashboardEnabled: false,
+    });
+    assert.equal(resolveLocalServerLinkOptions(config, false), undefined);
+
+    config.dev.localServer.link.enabled = false;
+    assert.equal(resolveLocalServerLinkOptions(config, true), undefined);
 });
 
 test("loadBlurConfig defaults local-server worldSync modes to prompt", async (t) => {
@@ -369,7 +402,7 @@ test("buildRemoteWorldSyncFailureMessage replaces raw unknown backend errors wit
         buildRemoteWorldSyncFailureMessage({
             worldName: "Bedrock level",
             error: new Error(
-                "blr could not inspect remote world object s3://mpl-worlds/worlds/Bedrock level.zip because the S3 backend returned an unknown error. This backend may not fully support this request, or the active credentials may not allow it.",
+                "blr could not inspect remote world object s3://example-worlds/worlds/Bedrock level.zip because the S3 backend returned an unknown error. This backend may not fully support this request, or the active credentials may not allow it.",
             ),
         }),
         /Continuing without remote world sync\./,
@@ -406,7 +439,7 @@ test("resolveProjectWatchChangeAction reloads source changes, syncs pack changes
     });
     assert.deepEqual(
         resolveProjectWatchChangeAction(
-            "behavior_packs/example-pack/entities/pet.json",
+            "behavior_packs/example-pack/entities/example_entity.json",
         ),
         {
             kind: "sync",
@@ -415,7 +448,7 @@ test("resolveProjectWatchChangeAction reloads source changes, syncs pack changes
     );
     assert.deepEqual(
         resolveProjectWatchChangeAction(
-            "resource_packs/example-pack/textures/entity/pet.png",
+            "resource_packs/example-pack/textures/entity/example_entity.png",
         ),
         {
             kind: "sync",

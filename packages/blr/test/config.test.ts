@@ -142,6 +142,108 @@ test("loadBlurConfig respects environment overrides for local-server scripting l
     assert.equal(config.dev.localServer.compactScriptingLogs, false);
 });
 
+test("loadBlurConfig defaults local-server Link settings", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.dev.localServer.link, {
+        enabled: true,
+        host: "localhost",
+        port: 19144,
+        dashboard: {
+            enabled: true,
+        },
+    });
+});
+
+test("loadBlurConfig respects configured local-server Link settings", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        dev: {
+            localServer: {
+                link: {
+                    enabled: false,
+                    host: "0.0.0.0",
+                    port: 19999,
+                    dashboard: {
+                        enabled: false,
+                    },
+                },
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.dev.localServer.link, {
+        enabled: false,
+        host: "0.0.0.0",
+        port: 19999,
+        dashboard: {
+            enabled: false,
+        },
+    });
+});
+
+test("loadBlurConfig respects environment overrides for local-server Link settings", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const previousEnabled = process.env.BLR_DEV_LOCALSERVER_LINK_ENABLED;
+    const previousHost = process.env.BLR_DEV_LOCALSERVER_LINK_HOST;
+    const previousPort = process.env.BLR_DEV_LOCALSERVER_LINK_PORT;
+    const previousDashboardEnabled =
+        process.env.BLR_DEV_LOCALSERVER_LINK_DASHBOARD_ENABLED;
+    process.env.BLR_DEV_LOCALSERVER_LINK_ENABLED = "false";
+    process.env.BLR_DEV_LOCALSERVER_LINK_HOST = "0.0.0.0";
+    process.env.BLR_DEV_LOCALSERVER_LINK_PORT = "19999";
+    process.env.BLR_DEV_LOCALSERVER_LINK_DASHBOARD_ENABLED = "false";
+    t.after(() => {
+        if (typeof previousEnabled === "undefined") {
+            delete process.env.BLR_DEV_LOCALSERVER_LINK_ENABLED;
+        } else {
+            process.env.BLR_DEV_LOCALSERVER_LINK_ENABLED = previousEnabled;
+        }
+        if (typeof previousHost === "undefined") {
+            delete process.env.BLR_DEV_LOCALSERVER_LINK_HOST;
+        } else {
+            process.env.BLR_DEV_LOCALSERVER_LINK_HOST = previousHost;
+        }
+        if (typeof previousPort === "undefined") {
+            delete process.env.BLR_DEV_LOCALSERVER_LINK_PORT;
+        } else {
+            process.env.BLR_DEV_LOCALSERVER_LINK_PORT = previousPort;
+        }
+        if (typeof previousDashboardEnabled === "undefined") {
+            delete process.env.BLR_DEV_LOCALSERVER_LINK_DASHBOARD_ENABLED;
+        } else {
+            process.env.BLR_DEV_LOCALSERVER_LINK_DASHBOARD_ENABLED =
+                previousDashboardEnabled;
+        }
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.dev.localServer.link, {
+        enabled: false,
+        host: "0.0.0.0",
+        port: 19999,
+        dashboard: {
+            enabled: false,
+        },
+    });
+});
+
 test("loadBlurConfig defaults dev.watch.paths to runtime source only", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-config-");
     await createMinimalProject(projectRoot, {
@@ -179,6 +281,21 @@ test("loadBlurConfig accepts package.defaultTarget package formats", async (t) =
     }
 });
 
+test("loadBlurConfig maps the bds behavior package default target alias to behavior-pack", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        package: {
+            defaultTarget: "bds-behavior-pack",
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.equal(config.package.defaultTarget, "behavior-pack");
+});
+
 test("loadBlurConfig accepts package.defaultTargets package formats", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-config-");
     await createMinimalProject(projectRoot, {
@@ -187,6 +304,24 @@ test("loadBlurConfig accepts package.defaultTargets package formats", async (t) 
         namespace: "bc_df",
         package: {
             defaultTargets: ["behavior-pack", "resource-pack"],
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.package.defaultTargets, [
+        "behavior-pack",
+        "resource-pack",
+    ]);
+});
+
+test("loadBlurConfig maps bds behavior package default target aliases to behavior-pack", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        package: {
+            defaultTargets: ["bds-behavior-pack", "resource-pack"],
         },
     });
 

@@ -19,9 +19,23 @@ export const PACKAGE_TARGETS_REQUIRING_WORLD = [
 ] as const satisfies readonly PackageTarget[];
 
 const PACKAGE_TARGET_SET = new Set<string>(SUPPORTED_PACKAGE_TARGETS);
+const PACKAGE_TARGET_ALIASES = new Map<string, PackageTarget>([
+    ["bds-behavior-pack", "behavior-pack"],
+]);
 
 export function isPackageTarget(value: unknown): value is PackageTarget {
     return typeof value === "string" && PACKAGE_TARGET_SET.has(value);
+}
+
+export function normalizePackageTarget(
+    value: unknown,
+): PackageTarget | undefined {
+    if (isPackageTarget(value)) {
+        return value;
+    }
+    return typeof value === "string"
+        ? PACKAGE_TARGET_ALIASES.get(value)
+        : undefined;
 }
 
 export function formatSupportedPackageTargets(): string {

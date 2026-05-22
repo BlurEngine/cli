@@ -18,6 +18,8 @@ export const DEFAULT_RUNTIME_OUTFILE = "dist/scripts/main.js";
 export const DEFAULT_RUNTIME_TARGET = "es2022";
 export const DEFAULT_DIST_STAGE_ROOT = "dist/stage";
 export const DEFAULT_DIST_PACKAGES_ROOT = "dist/packages";
+export const DEFAULT_LINK_SERVER_HOST = "localhost";
+export const DEFAULT_LINK_SERVER_PORT = 19144;
 
 export const DEFAULT_EXTERNAL_MODULES = [
     "@minecraft/server",

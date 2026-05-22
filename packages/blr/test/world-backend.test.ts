@@ -99,7 +99,7 @@ test("listRemoteWorldsFromS3 lists world zip objects and ignores lock or unrelat
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -155,7 +155,7 @@ test("listRemoteWorldsFromS3 respects projectPrefix namespaces", async (t) => {
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
                 projectPrefix: true,
@@ -206,7 +206,7 @@ test("listRemoteWorldVersionsFromS3 lists object versions when bucket versioning
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -292,7 +292,7 @@ test("listRemoteWorldVersionsFromS3 degrades cleanly when a version metadata loo
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -357,7 +357,7 @@ test("listRemoteWorldVersionsFromS3 falls back to the current object metadata fo
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -426,7 +426,7 @@ test("listRemoteWorldVersionsFromS3 fails cleanly when bucket versioning is unav
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -468,7 +468,7 @@ test("listRemoteWorldsFromS3 reports why versioning could not be verified", asyn
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -510,7 +510,7 @@ test("pullWorldFromS3 persists the selected project pin and status keeps the tra
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -614,7 +614,7 @@ test("pullWorldFromS3 downloads a versioned world without requiring a versioned 
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -687,7 +687,7 @@ test("describeWorldStatus reports a useful message when the backend cannot inspe
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -734,7 +734,7 @@ test("describeWorldStatus reports tracked-world fingerprint drift when the proje
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -801,7 +801,7 @@ test("pushWorldToS3 returns the pushed version id and writes the minimal tracked
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -854,7 +854,7 @@ test("pushWorldToS3 returns the pushed version id and writes the minimal tracked
     });
     const expectedFingerprint = buildTrackedProjectWorldFingerprint({
         backend: "s3",
-        bucket: "mpl-worlds",
+        bucket: "example-worlds",
         endpoint: "",
         objectKey: "worlds/Bedrock level.zip",
     });
@@ -891,7 +891,7 @@ test("pullWorldFromS3 rejects when bucket versioning is unavailable", async (t) 
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -936,7 +936,7 @@ test("pushWorldToS3 rejects when bucket versioning is unavailable", async (t) =>
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -987,7 +987,7 @@ test("pushWorldToS3 rejects when the project does not track a remote world versi
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -1065,7 +1065,7 @@ test("pushWorldToS3 rejects when the tracked project pin does not match the late
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -1085,7 +1085,7 @@ test("pushWorldToS3 rejects when the tracked project pin does not match the late
                 name: "Bedrock level",
                 remoteFingerprint: buildTrackedProjectWorldFingerprint({
                     backend: "s3",
-                    bucket: "mpl-worlds",
+                    bucket: "example-worlds",
                     endpoint: "",
                     objectKey: "worlds/Bedrock level.zip",
                 }),
@@ -1152,7 +1152,7 @@ test("runWorldPushCommand prints the pushed version id on success", async (t) =>
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -1235,7 +1235,7 @@ test("runWorldVersionsCommand shows push actor metadata when it is recorded and 
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -1335,7 +1335,7 @@ test("runWorldVersionsCommand skips author output instead of failing when versio
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -1416,7 +1416,7 @@ test("runWorldVersionsCommand shows the latest actor when the backend only retur
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -1506,7 +1506,7 @@ test("runWorldPushCommand fails clearly in non-interactive mode when the remote 
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },
@@ -1583,7 +1583,7 @@ test("runWorldListCommand shows version-unavailable output and prints the versio
         world: {
             backend: "s3",
             s3: {
-                bucket: "mpl-worlds",
+                bucket: "example-worlds",
                 region: "eu-west-2",
                 keyPrefix: "worlds",
             },

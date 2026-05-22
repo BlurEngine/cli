@@ -417,6 +417,10 @@
         "worldSync": {
           "$ref": "#/definitions/BlurConfigLocalServerWorldSyncFile",
           "description": "World sync defaults for `blr dev`."
+        },
+        "link": {
+          "$ref": "#/definitions/BlurConfigLocalServerLinkFile",
+          "description": "Local Link bridge settings."
         }
       },
       "additionalProperties": false,
@@ -448,6 +452,40 @@
     "WorldSyncRuntimeMode": {
       "type": "string",
       "enum": ["prompt", "preserve", "replace", "backup"]
+    },
+    "BlurConfigLocalServerLinkFile": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether `blr dev --local-server` starts the local Link bridge server."
+        },
+        "host": {
+          "type": "string",
+          "description": "Host interface used by the local Link bridge server."
+        },
+        "port": {
+          "type": "number",
+          "description": "Port used by the local Link bridge server. Use 0 to let the OS choose a free port."
+        },
+        "dashboard": {
+          "$ref": "#/definitions/BlurConfigLocalServerLinkDashboardFile",
+          "description": "Built-in dashboard settings for the local Link bridge server."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Local Link bridge settings used when `local-server` is active."
+    },
+    "BlurConfigLocalServerLinkDashboardFile": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the local Link bridge server exposes the built-in dashboard."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Local Link dashboard settings."
     }
   },
   "$id": "https://blurengine.dev/schema/blr.config.schema.json",

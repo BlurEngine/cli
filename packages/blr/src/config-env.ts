@@ -61,6 +61,13 @@ const CONFIG_ENV_SPECS: ConfigEnvSpec[] = [
     { path: ["dev", "localServer", "operators"], kind: "stringArray" },
     { path: ["dev", "localServer", "defaultPermissionLevel"], kind: "string" },
     { path: ["dev", "localServer", "gamemode"], kind: "string" },
+    { path: ["dev", "localServer", "link", "enabled"], kind: "boolean" },
+    { path: ["dev", "localServer", "link", "host"], kind: "string" },
+    { path: ["dev", "localServer", "link", "port"], kind: "number" },
+    {
+        path: ["dev", "localServer", "link", "dashboard", "enabled"],
+        kind: "boolean",
+    },
     {
         path: ["dev", "localServer", "worldSync", "projectWorldMode"],
         kind: "string",

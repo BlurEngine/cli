@@ -19,7 +19,7 @@ import { DEFAULT_PACK_VERSION } from "../constants.js";
 import {
     DEFAULT_PACKAGE_TARGET,
     formatSupportedPackageTargets,
-    isPackageTarget,
+    normalizePackageTarget,
     PACKAGE_TARGETS_REQUIRING_WORLD,
 } from "../package-targets.js";
 import {
@@ -654,7 +654,7 @@ async function packageProjectTarget(
     if (targetDefinition.standalonePack) {
         const packSource =
             targetDefinition.standalonePack === "behavior"
-                ? artifacts.stageBehaviorPackDirectory
+                ? artifacts.stageBdsBehaviorPackDirectory
                 : artifacts.stageResourcePackDirectory;
         if (!packSource || !standalonePackName) {
             throw new Error(
@@ -733,15 +733,16 @@ function parsePackageTargets(values: string[]): PackageTarget[] {
     const seen = new Set<PackageTarget>();
 
     for (const value of values) {
-        if (!isPackageTarget(value)) {
+        const target = normalizePackageTarget(value);
+        if (!target) {
             throw new Error(
                 `Unsupported package target "${value}". Supported targets: ${formatSupportedPackageTargets()}.`,
             );
         }
 
-        if (!seen.has(value)) {
-            targets.push(value);
-            seen.add(value);
+        if (!seen.has(target)) {
+            targets.push(target);
+            seen.add(target);
         }
     }
 

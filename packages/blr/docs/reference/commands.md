@@ -113,6 +113,13 @@ When `local-server` is live:
 - type a server command and press Enter
 - press `Ctrl+C` once to shut down the full `dev` session
 - if the managed server exits, `dev` shuts down its watch session too
+- when `dev.localServer.link.enabled` is `true`, `blr` also starts the local Link bridge server on `dev.localServer.link.host` and `dev.localServer.link.port`
+- when `dev.localServer.link.dashboard.enabled` is `true`, that Link server URL also serves the built-in dashboard
+- `Link.event(...)`, `Link.snapshot(...)`, and `Link.on(...)` own their availability checks, so authored code should call them directly; response flows should be handled as separate inbound events with `Link.on(...)`
+- `Link.snapshot(...)` marks an event as latest-retained state, so the local Link server keeps the newest value separately from the default stream log
+- projects own authored Link event names, payloads, and gameplay behavior; Bebe/`blr` own built-in Link smoke behavior such as `bebe.link.ready`, while the dashboard defaults to a generic `project.message` send event
+- the Link bridge assigns fixed-length base64 UUIDv7 event ids for replay and dedupe and exposes them through `event.meta`
+- if the Link bridge server cannot start, `dev` warns and continues without Link
 
 Pack automation defaults:
 
@@ -205,9 +212,14 @@ Build output:
 
 - `blr build` stages canonical output into `dist/stage`
 - behavior pack source is copied to `dist/stage/behavior_packs/<packName>` when the project includes a behavior pack
+- BDS behavior pack output is copied to `dist/stage/bds_behavior_packs/<packName>` when the project includes a behavior pack
 - resource pack source is copied to `dist/stage/resource_packs/<packName>` when the project includes a resource pack
-- when the project has a runtime entry, the bundled script output is copied into the staged behavior pack `scripts/` directory
-- `local-deploy` and `local-server` both consume this staged output instead of reading source packs directly
+- when the project has a runtime entry, the offline bundled script is copied into the staged behavior pack `scripts/` directory and the BDS bundled script is copied into the staged BDS behavior pack `scripts/` directory
+- direct `Link` calls imported from `@blurengine/bebe` are stripped from the offline bundle and kept in the BDS bundle
+- `blr` injects and owns the BDS Link transport in the BDS bundle; generated projects should use `Link` without manually installing the transport
+- generated project code should not import Bebe internal transport paths; those are reserved for `blr` bootstrap/runtime wiring
+- dynamic Link usage such as assigning or destructuring `Link.event` or `Link.snapshot` fails the offline build with a clear error because `blr` cannot safely erase it
+- `local-deploy` consumes the offline staged behavior pack; `local-server` consumes the BDS staged behavior pack
 
 Flags:
 
@@ -279,9 +291,10 @@ Currently supported targets:
 `behavior-pack` behavior:
 
 - runs `build` first
-- copies the staged behavior pack into a package workspace
+- copies the staged BDS behavior-pack variant into a package workspace
 - writes `dist/packages/<behaviorPackName>-behavior.mcpack`
 - does not require a project world source
+- keeps BDS-only script dependencies such as `@minecraft/server-net`
 - fails if the project has no staged behavior pack
 
 `resource-pack` behavior:

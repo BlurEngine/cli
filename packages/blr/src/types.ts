@@ -284,6 +284,38 @@ export interface BlurConfigLocalServerWorldSyncFile {
 }
 
 /**
+ * Local Link dashboard settings.
+ */
+export interface BlurConfigLocalServerLinkDashboardFile {
+    /**
+     * Whether the local Link bridge server exposes the built-in dashboard.
+     */
+    enabled?: boolean;
+}
+
+/**
+ * Local Link bridge settings used when `local-server` is active.
+ */
+export interface BlurConfigLocalServerLinkFile {
+    /**
+     * Whether `blr dev --local-server` starts the local Link bridge server.
+     */
+    enabled?: boolean;
+    /**
+     * Host interface used by the local Link bridge server.
+     */
+    host?: string;
+    /**
+     * Port used by the local Link bridge server. Use 0 to let the OS choose a free port.
+     */
+    port?: number;
+    /**
+     * Built-in dashboard settings for the local Link bridge server.
+     */
+    dashboard?: BlurConfigLocalServerLinkDashboardFile;
+}
+
+/**
  * Project-level defaults for `local-server`.
  */
 export interface BlurConfigLocalServerFile {
@@ -335,6 +367,10 @@ export interface BlurConfigLocalServerFile {
      * World sync defaults for `blr dev`.
      */
     worldSync?: BlurConfigLocalServerWorldSyncFile;
+    /**
+     * Local Link bridge settings.
+     */
+    link?: BlurConfigLocalServerLinkFile;
 }
 
 /**
@@ -490,6 +526,14 @@ export interface BlurProject {
             operators: string[];
             defaultPermissionLevel: PermissionLevel;
             gamemode: string;
+            link: {
+                enabled: boolean;
+                host: string;
+                port: number;
+                dashboard: {
+                    enabled: boolean;
+                };
+            };
             worldSync: {
                 projectWorldMode: WorldSyncProjectMode;
                 runtimeWorldMode: WorldSyncRuntimeMode;

@@ -16,6 +16,11 @@ This file applies only to agents working in the `cli/` repository.
 5. If release or open-source repo surfaces change, keep root docs, workflows, package metadata, security information, and Changesets config aligned.
 6. Changes affecting code, scaffold behavior, upgrade behavior, release flow, or docs that claim behavior must leave the repo passing `npm run check`.
 
+## Git Safety Rules
+
+1. Do not stage, commit, amend, rebase, reset, force-push, or push unless the user explicitly asks for that exact Git action in the current task. Do not infer permission from broad instructions such as "proceed".
+2. Before any requested Git action, inspect the working tree and separate user or unrelated changes from the requested change. Preserve unrelated changes in the working tree unless the user explicitly asks to include them.
+
 ## World Sync Guidance
 
 1. Treat the world surfaces as separate concerns:

@@ -299,9 +299,28 @@ Canonical staged build output.
 Typical contents:
 
 - `behavior_packs/<packName>/`
+- `bds_behavior_packs/<packName>/`
 - `resource_packs/<packName>/`
 
-This is the source that `local-deploy`, `local-server`, and packaging targets consume.
+The `behavior_packs` variant is used for offline/local Minecraft deployment. The `bds_behavior_packs` variant is used for local-server and standalone behavior-pack packaging. Resource packs remain shared.
+
+When a project uses `Link` from `@blurengine/bebe`, direct `Link` calls are stripped from the offline behavior-pack script bundle and kept in the BDS script bundle.
+`blr` injects and owns the BDS Link transport in the BDS bundle, so generated projects should use `Link` without manually installing the transport.
+Dynamic Link usage such as assigning or destructuring `Link.event` or `Link.snapshot` fails the offline build with a clear error because `blr` cannot safely erase it.
+During `blr dev --local-server`, the local Link server also exposes the built-in dashboard at its root URL when `dev.localServer.link.dashboard.enabled` is `true`.
+`Link.event(...)`, `Link.snapshot(...)`, and `Link.on(...)` own their availability checks, so authored code should call them directly; response flows should be handled as separate inbound events with `Link.on(...)`.
+`Link.snapshot(...)` marks an event as latest-retained state, so the local Link server keeps the newest value separately from the default stream log.
+The Link bridge assigns fixed-length base64 UUIDv7 event ids for replay and dedupe and exposes them through `event.meta`.
+
+### Link Responsibility Boundary
+
+Generated projects own authored Link event names, payloads, and gameplay behavior. For example, a project may choose to emit a project-specific ready event or publish a player list.
+
+Bebe owns the public `Link` API imported from `@blurengine/bebe`, including the `Link.event(...)`, `Link.snapshot(...)`, and `Link.on(...)` contract, the `LinkEvent` shape, safe unavailable behavior, retained inbound registrations, transport status, capabilities, transport-generated metadata, and BDS-owned smoke behavior such as `bebe.link.ready`.
+
+`blr` owns the local Link server, dashboard host, HTTP API, default dashboard send event (`project.message`), BDS transport injection, offline Link stripping, and selection of the correct staged behavior-pack variant for local-deploy, local-server, and packaging.
+
+Generated project code should not import Bebe internal transport paths such as `@blurengine/bebe/internal/link/bds`. Those paths exist for `blr` bootstrap/runtime wiring, not gameplay code.
 
 ### `dist/packages/`
 
@@ -312,7 +331,7 @@ Current package targets:
 - `<packName>.mctemplate` from `blr package`
 - `<packName>.mcworld` from `blr package mcworld`
 - `<packName>.mcaddon` from `blr package mcaddon`
-- `<behaviorPackName>-behavior.mcpack` from `blr package behavior-pack`
+- `<behaviorPackName>-behavior.mcpack` from `blr package behavior-pack` using the BDS behavior-pack variant
 - `<resourcePackName>-resource.mcpack` from `blr package resource-pack`
 - `<worldName>-world.<format>` from `blr package world`
 - `assets.zip` from `blr package assets`

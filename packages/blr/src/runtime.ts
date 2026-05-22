@@ -1,21 +1,30 @@
+import { copyFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { build } from "esbuild";
+import { build, type Loader, type Plugin } from "esbuild";
 import {
     resolvePackFeatureSelection,
     type PackFeatureSelectionOverride,
 } from "./content.js";
 import {
+    BASELINE_DEPENDENCIES,
     DEFAULT_DIST_PACKAGES_ROOT,
     DEFAULT_DIST_STAGE_ROOT,
+    DEFAULT_LINK_SERVER_HOST,
+    DEFAULT_LINK_SERVER_PORT,
 } from "./constants.js";
 import type { DebugLogger } from "./debug.js";
 import {
     copyDirectory,
     ensureDirectory,
     exists,
+    readJson,
+    readText,
     removeDirectory,
     removeFilesNamed,
+    writeJson,
 } from "./fs.js";
+import { stripOfflineBebeLink } from "./link-strip.js";
 import type {
     BlurMachineSettings,
     BlurProject,
@@ -35,6 +44,11 @@ export type MinecraftDevelopmentRootResolution = {
 type BuildProjectOptions = {
     production: boolean;
     debug?: DebugLogger;
+    link?: {
+        baseUrl?: string;
+        enabled?: boolean;
+        logReady?: boolean;
+    };
 };
 
 export type ResolvedBuildArtifacts = {
@@ -42,13 +56,244 @@ export type ResolvedBuildArtifacts = {
     stageRoot: string;
     packagesRoot: string;
     runtimeOutFilePath: string;
+    runtimeBdsOutFilePath: string;
     runtimeScriptsDirectory: string;
     behaviorPackName?: string;
     resourcePackName?: string;
     stageBehaviorPackDirectory?: string;
     stageBehaviorScriptsDirectory?: string;
+    stageBdsBehaviorPackDirectory?: string;
+    stageBdsBehaviorScriptsDirectory?: string;
     stageResourcePackDirectory?: string;
 };
+
+type PackManifestDependency = Record<string, unknown> & {
+    module_name?: unknown;
+};
+
+type PackManifest = Record<string, unknown> & {
+    dependencies?: unknown;
+};
+
+const SERVER_ONLY_MANIFEST_MODULES = new Set([
+    "@minecraft/server-admin",
+    "@minecraft/server-net",
+]);
+const RUNTIME_SOURCE_FILTER = /\.[cm]?[jt]sx?$/;
+
+function stripVersionRange(version: string): string {
+    return version.replace(/^[~^]/u, "");
+}
+
+function toBdsRuntimeOutFilePath(runtimeOutFilePath: string): string {
+    const extension = path.extname(runtimeOutFilePath);
+    if (extension.length === 0) {
+        return `${runtimeOutFilePath}.bds`;
+    }
+
+    return `${runtimeOutFilePath.slice(0, -extension.length)}.bds${extension}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readManifestDependencies(
+    manifest: PackManifest,
+): PackManifestDependency[] {
+    if (!Array.isArray(manifest.dependencies)) {
+        return [];
+    }
+
+    return manifest.dependencies.filter(isRecord);
+}
+
+function ensureManifestDependency(
+    dependencies: PackManifestDependency[],
+    moduleName: keyof typeof BASELINE_DEPENDENCIES,
+): void {
+    if (
+        dependencies.some((dependency) => dependency.module_name === moduleName)
+    ) {
+        return;
+    }
+
+    dependencies.push({
+        module_name: moduleName,
+        version: stripVersionRange(BASELINE_DEPENDENCIES[moduleName]),
+    });
+}
+
+async function updateBehaviorManifestForVariant(
+    behaviorPackDirectory: string,
+    variant: "bds" | "offline",
+): Promise<void> {
+    const manifestPath = path.join(behaviorPackDirectory, "manifest.json");
+    if (!(await exists(manifestPath))) {
+        return;
+    }
+
+    const manifest = await readJson<PackManifest>(manifestPath);
+    const dependencies = readManifestDependencies(manifest);
+
+    if (variant === "offline") {
+        manifest.dependencies = dependencies.filter((dependency) => {
+            const moduleName = dependency.module_name;
+            return (
+                typeof moduleName !== "string" ||
+                !SERVER_ONLY_MANIFEST_MODULES.has(moduleName)
+            );
+        });
+    } else {
+        ensureManifestDependency(dependencies, "@minecraft/server-net");
+        manifest.dependencies = dependencies;
+    }
+
+    await writeJson(manifestPath, manifest);
+}
+
+function toImportSpecifier(projectRoot: string, targetPath: string): string {
+    const relativePath = path
+        .relative(projectRoot, targetPath)
+        .replace(/\\/g, "/");
+    return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+}
+
+function resolveDefaultLinkBaseUrl(): string {
+    return `http://${DEFAULT_LINK_SERVER_HOST}:${DEFAULT_LINK_SERVER_PORT}`;
+}
+
+function isProjectRuntimeSource(
+    projectRoot: string,
+    filePath: string,
+): boolean {
+    const resolvedRoot = path.resolve(projectRoot);
+    const resolvedFile = path.resolve(filePath);
+    if (resolvedFile.includes(`${path.sep}node_modules${path.sep}`)) {
+        return false;
+    }
+
+    return (
+        resolvedFile === resolvedRoot ||
+        resolvedFile.startsWith(`${resolvedRoot}${path.sep}`)
+    );
+}
+
+function getEsbuildLoader(filePath: string): Loader {
+    const extension = path.extname(filePath);
+    switch (extension) {
+        case ".js":
+        case ".mjs":
+        case ".cjs":
+            return "js";
+        case ".jsx":
+            return "jsx";
+        case ".tsx":
+            return "tsx";
+        case ".ts":
+        case ".mts":
+        case ".cts":
+        default:
+            return "ts";
+    }
+}
+
+function createOfflineLinkStripPlugin(projectRoot: string): Plugin {
+    return {
+        name: "bebe-offline-link-strip",
+        setup(buildContext) {
+            buildContext.onLoad(
+                {
+                    filter: RUNTIME_SOURCE_FILTER,
+                },
+                async (args) => {
+                    if (!isProjectRuntimeSource(projectRoot, args.path)) {
+                        return undefined;
+                    }
+
+                    const sourceText = await readText(args.path);
+                    return {
+                        contents: stripOfflineBebeLink(sourceText, args.path),
+                        loader: getEsbuildLoader(args.path),
+                        resolveDir: path.dirname(args.path),
+                    };
+                },
+            );
+        },
+    };
+}
+
+async function hasResolvableBebeLinkBds(projectRoot: string): Promise<boolean> {
+    const packageJsonPath = path.join(projectRoot, "package.json");
+    if (!(await exists(packageJsonPath))) {
+        return false;
+    }
+
+    const packageJson = await readJson<{
+        dependencies?: Record<string, unknown>;
+        devDependencies?: Record<string, unknown>;
+        optionalDependencies?: Record<string, unknown>;
+        peerDependencies?: Record<string, unknown>;
+    }>(packageJsonPath);
+    const declaresBebe = [
+        packageJson.dependencies,
+        packageJson.devDependencies,
+        packageJson.optionalDependencies,
+        packageJson.peerDependencies,
+    ].some((dependencies) =>
+        Boolean(dependencies && "@blurengine/bebe" in dependencies),
+    );
+    if (!declaresBebe) {
+        return false;
+    }
+
+    try {
+        createRequire(packageJsonPath).resolve(
+            "@blurengine/bebe/internal/link/bds",
+        );
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function createBdsRuntimeBuildEntry(
+    projectRoot: string,
+    entryPath: string,
+    options: BuildProjectOptions,
+): Promise<{
+    contents?: string;
+    sourcefile?: string;
+}> {
+    if (
+        options.link?.enabled === false ||
+        !(await hasResolvableBebeLinkBds(projectRoot))
+    ) {
+        return {};
+    }
+
+    const baseUrl = options.link?.baseUrl ?? resolveDefaultLinkBaseUrl();
+    const userEntrySpecifier = toImportSpecifier(projectRoot, entryPath);
+    const linkOptions = [
+        `baseUrl: ${JSON.stringify(baseUrl)}`,
+        "context: __blrLinkContext",
+    ];
+    if (options.link?.logReady) {
+        linkOptions.push("logger: console");
+    }
+
+    return {
+        contents: [
+            'import { Context } from "@blurengine/bebe";',
+            'import { installBdsLinkTransport } from "@blurengine/bebe/internal/link/bds";',
+            "const __blrLinkContext = new Context();",
+            `installBdsLinkTransport({ ${linkOptions.join(", ")} });`,
+            `void import(${JSON.stringify(userEntrySpecifier)});`,
+            "",
+        ].join("\n"),
+        sourcefile: "bebe-link-bds-entry.js",
+    };
+}
 
 function getGameDeploymentRootPaths(
     customDeploymentPath: string,
@@ -181,11 +426,19 @@ export function resolveBuildArtifacts(
     const stageBehaviorPackDirectory = behaviorPackName
         ? path.join(stageRoot, "behavior_packs", behaviorPackName)
         : undefined;
+    const stageBdsBehaviorPackDirectory = behaviorPackName
+        ? path.join(stageRoot, "bds_behavior_packs", behaviorPackName)
+        : undefined;
+    const runtimeOutFilePath = path.resolve(
+        projectRoot,
+        config.runtime.outFile,
+    );
     return {
         distRoot,
         stageRoot,
         packagesRoot: path.resolve(projectRoot, DEFAULT_DIST_PACKAGES_ROOT),
-        runtimeOutFilePath: path.resolve(projectRoot, config.runtime.outFile),
+        runtimeOutFilePath,
+        runtimeBdsOutFilePath: toBdsRuntimeOutFilePath(runtimeOutFilePath),
         runtimeScriptsDirectory: path.resolve(
             projectRoot,
             path.dirname(config.runtime.outFile),
@@ -195,6 +448,10 @@ export function resolveBuildArtifacts(
         stageBehaviorPackDirectory,
         stageBehaviorScriptsDirectory: stageBehaviorPackDirectory
             ? path.join(stageBehaviorPackDirectory, "scripts")
+            : undefined,
+        stageBdsBehaviorPackDirectory,
+        stageBdsBehaviorScriptsDirectory: stageBdsBehaviorPackDirectory
+            ? path.join(stageBdsBehaviorPackDirectory, "scripts")
             : undefined,
         stageResourcePackDirectory: resourcePackName
             ? path.join(stageRoot, "resource_packs", resourcePackName)
@@ -212,7 +469,11 @@ async function stageProjectContent(
     await ensureDirectory(artifacts.stageRoot);
 
     let behaviorSource: string | undefined;
-    if (config.packs.behavior && artifacts.stageBehaviorPackDirectory) {
+    if (
+        config.packs.behavior &&
+        artifacts.stageBehaviorPackDirectory &&
+        artifacts.stageBdsBehaviorPackDirectory
+    ) {
         behaviorSource = path.resolve(
             projectRoot,
             config.packs.behavior.directory,
@@ -221,9 +482,25 @@ async function stageProjectContent(
             behaviorSource,
             artifacts.stageBehaviorPackDirectory,
         );
+        await copyDirectory(
+            behaviorSource,
+            artifacts.stageBdsBehaviorPackDirectory,
+        );
         await removeFilesNamed(
             artifacts.stageBehaviorPackDirectory,
             ".gitkeep",
+        );
+        await removeFilesNamed(
+            artifacts.stageBdsBehaviorPackDirectory,
+            ".gitkeep",
+        );
+        await updateBehaviorManifestForVariant(
+            artifacts.stageBehaviorPackDirectory,
+            "offline",
+        );
+        await updateBehaviorManifestForVariant(
+            artifacts.stageBdsBehaviorPackDirectory,
+            "bds",
         );
     }
 
@@ -246,49 +523,71 @@ async function stageProjectContent(
     debug?.log("build", "staged project pack content", {
         behaviorSource,
         stageBehaviorPackDirectory: artifacts.stageBehaviorPackDirectory,
+        stageBdsBehaviorPackDirectory: artifacts.stageBdsBehaviorPackDirectory,
         resourceSource,
         stageResourcePackDirectory: artifacts.stageResourcePackDirectory,
     });
 }
 
-async function syncBuiltScriptsIntoStage(
-    artifacts: ResolvedBuildArtifacts,
+async function copySourceMapIfPresent(
+    sourceFilePath: string,
+    stageBehaviorScriptsDirectory: string,
+): Promise<void> {
+    const sourceMapPath = `${sourceFilePath}.map`;
+    if (!(await exists(sourceMapPath))) {
+        return;
+    }
+
+    await copyFile(
+        sourceMapPath,
+        path.join(stageBehaviorScriptsDirectory, path.basename(sourceMapPath)),
+    );
+}
+
+async function syncBuiltScriptIntoStage(
+    sourceFilePath: string,
+    stageBehaviorScriptsDirectory: string | undefined,
+    outputFileName: string,
     debug?: DebugLogger,
 ): Promise<void> {
-    if (!artifacts.stageBehaviorScriptsDirectory) {
+    if (!stageBehaviorScriptsDirectory) {
         throw new Error(
             "Cannot sync built scripts because no staged behavior pack is present.",
         );
     }
 
-    if (!(await exists(artifacts.runtimeScriptsDirectory))) {
+    if (!(await exists(sourceFilePath))) {
         throw new Error(
-            `Built scripts directory does not exist: ${path.relative(process.cwd(), artifacts.runtimeScriptsDirectory)}`,
+            `Built script file does not exist: ${path.relative(process.cwd(), sourceFilePath)}`,
         );
     }
 
-    if (
-        artifacts.runtimeScriptsDirectory ===
-        artifacts.stageBehaviorScriptsDirectory
-    ) {
+    await ensureDirectory(stageBehaviorScriptsDirectory);
+    const targetFilePath = path.join(
+        stageBehaviorScriptsDirectory,
+        outputFileName,
+    );
+
+    if (path.resolve(sourceFilePath) === path.resolve(targetFilePath)) {
         debug?.log(
             "build",
             "runtime bundle already targets staged behavior pack scripts",
             {
-                stageBehaviorScriptsDirectory:
-                    artifacts.stageBehaviorScriptsDirectory,
+                targetFilePath,
             },
+        );
+        await copySourceMapIfPresent(
+            sourceFilePath,
+            stageBehaviorScriptsDirectory,
         );
         return;
     }
 
-    await copyDirectory(
-        artifacts.runtimeScriptsDirectory,
-        artifacts.stageBehaviorScriptsDirectory,
-    );
+    await copyFile(sourceFilePath, targetFilePath);
+    await copySourceMapIfPresent(sourceFilePath, stageBehaviorScriptsDirectory);
     debug?.log("build", "synced built scripts into staged behavior pack", {
-        source: artifacts.runtimeScriptsDirectory,
-        destination: artifacts.stageBehaviorScriptsDirectory,
+        source: sourceFilePath,
+        destination: targetFilePath,
     });
 }
 
@@ -303,6 +602,14 @@ export async function ensureStagedBuildArtifacts(
     ) {
         throw new Error(
             "Missing staged behavior pack output. Run `blr build` or `blr dev` first.",
+        );
+    }
+    if (
+        artifacts.stageBdsBehaviorPackDirectory &&
+        !(await exists(artifacts.stageBdsBehaviorPackDirectory))
+    ) {
+        throw new Error(
+            "Missing staged BDS behavior pack output. Run `blr build` or `blr dev` first.",
         );
     }
     if (
@@ -329,6 +636,7 @@ export async function buildProject(
     options.debug?.log("build", "starting build", {
         entry: hasRuntimeEntry ? config.runtime.entry : "(none)",
         outFile: config.runtime.outFile,
+        bdsOutFile: path.relative(projectRoot, artifacts.runtimeBdsOutFilePath),
         stageRoot: path.relative(projectRoot, artifacts.stageRoot),
         production: options.production,
         externalModules: config.runtime.externalModules,
@@ -339,6 +647,9 @@ export async function buildProject(
     }
     if (hasRuntimeEntry && !artifacts.stageBehaviorScriptsDirectory) {
         throw new Error("Runtime scripts require a behavior pack.");
+    }
+    if (hasRuntimeEntry && !artifacts.stageBdsBehaviorScriptsDirectory) {
+        throw new Error("Runtime scripts require a BDS behavior pack.");
     }
 
     await stageProjectContent(projectRoot, config, artifacts, options.debug);
@@ -355,10 +666,54 @@ export async function buildProject(
             sourcemap: config.runtime.sourcemap,
             minify: options.production,
             external: config.runtime.externalModules,
+            plugins: [createOfflineLinkStripPlugin(projectRoot)],
             logLevel: "silent",
         });
 
-        await syncBuiltScriptsIntoStage(artifacts, options.debug);
+        const bdsEntry = await createBdsRuntimeBuildEntry(
+            projectRoot,
+            entryPath,
+            options,
+        );
+        await build({
+            ...(bdsEntry.contents
+                ? {
+                      stdin: {
+                          contents: bdsEntry.contents,
+                          loader: "js",
+                          resolveDir: projectRoot,
+                          sourcefile: bdsEntry.sourcefile,
+                      },
+                  }
+                : {
+                      entryPoints: [entryPath],
+                  }),
+            outfile: artifacts.runtimeBdsOutFilePath,
+            bundle: true,
+            format: "esm",
+            platform: "neutral",
+            target: config.runtime.target,
+            sourcemap: config.runtime.sourcemap,
+            minify: options.production,
+            external: config.runtime.externalModules,
+            logLevel: "silent",
+        });
+
+        const stagedScriptFileName = path.basename(
+            artifacts.runtimeOutFilePath,
+        );
+        await syncBuiltScriptIntoStage(
+            artifacts.runtimeOutFilePath,
+            artifacts.stageBehaviorScriptsDirectory,
+            stagedScriptFileName,
+            options.debug,
+        );
+        await syncBuiltScriptIntoStage(
+            artifacts.runtimeBdsOutFilePath,
+            artifacts.stageBdsBehaviorScriptsDirectory,
+            stagedScriptFileName,
+            options.debug,
+        );
     } else {
         await removeDirectory(artifacts.runtimeScriptsDirectory);
     }
@@ -368,6 +723,12 @@ export async function buildProject(
         outFile: config.runtime.outFile,
         stageBehaviorPackDirectory: artifacts.stageBehaviorPackDirectory
             ? path.relative(projectRoot, artifacts.stageBehaviorPackDirectory)
+            : undefined,
+        stageBdsBehaviorPackDirectory: artifacts.stageBdsBehaviorPackDirectory
+            ? path.relative(
+                  projectRoot,
+                  artifacts.stageBdsBehaviorPackDirectory,
+              )
             : undefined,
         stageResourcePackDirectory: artifacts.stageResourcePackDirectory
             ? path.relative(projectRoot, artifacts.stageResourcePackDirectory)
