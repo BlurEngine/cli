@@ -42,6 +42,7 @@ export async function runBuildCommand(
     const artifacts = await buildProject(projectRoot, config, {
         production,
         debug,
+        pipeline: "build",
     });
     const buildSummary =
         config.runtime.entry.trim().length > 0

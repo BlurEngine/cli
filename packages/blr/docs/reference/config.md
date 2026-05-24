@@ -331,6 +331,35 @@ Notes:
 - `blr` injects and owns the BDS Link transport in the BDS bundle; generated projects should use `Link` without manually installing the transport
 - dynamic Link usage such as assigning or destructuring `Link.event` or `Link.snapshot` fails the offline build with a clear error because `blr` cannot safely erase it
 
+### `bebe`
+
+Optional Bebe integration configuration.
+
+Fields:
+
+- `diagnostics.missingReferences.dev`: missing soft-reference severity during `blr dev`
+- `diagnostics.missingReferences.build`: missing soft-reference severity during `blr build`
+- `diagnostics.missingReferences.package`: missing soft-reference severity during `blr package`
+- `diagnostics.missingReferences.check`: missing soft-reference severity during check-style pipelines
+- `zoneEditor.dev`: inject the in-game Bebe zone editor runtime during `blr dev`
+- `zoneEditor.package`: include the in-game Bebe zone editor runtime during `blr package`
+
+Defaults if omitted:
+
+- `diagnostics.missingReferences.dev`: `warn`
+- `diagnostics.missingReferences.build`: `error`
+- `diagnostics.missingReferences.package`: `error`
+- `diagnostics.missingReferences.check`: `error`
+- `zoneEditor.dev`: `true`
+- `zoneEditor.package`: `false`
+
+Notes:
+
+- the zone editor injection is only available when the project-installed `@blurengine/bebe` exposes the internal editor runtime used by `blr`
+- `blr dev` includes the editor by default so creators can use in-game tooling during development; the editor command uses the project namespace, for example `/<namespace>:zone`
+- `blr package` excludes the editor by default so distributable packs do not accidentally ship editing tools
+- setting `bebe.zoneEditor.package` to `true` intentionally packages the editor runtime
+
 ### `dev.watch`
 
 Optional project watch configuration.
@@ -510,6 +539,8 @@ Config-backed overrides:
   - `namespace` -> `BLR_NAMESPACE`
   - `minecraft.channel` -> `BLR_MINECRAFT_CHANNEL`
   - `minecraft.targetVersion` -> `BLR_MINECRAFT_TARGETVERSION`
+  - `bebe.zoneEditor.dev` -> `BLR_BEBE_ZONEEDITOR_DEV`
+  - `bebe.zoneEditor.package` -> `BLR_BEBE_ZONEEDITOR_PACKAGE`
   - `dev.localServer.worldName` -> `BLR_DEV_LOCALSERVER_WORLDNAME`
   - `dev.localServer.compactScriptingLogs` -> `BLR_DEV_LOCALSERVER_COMPACTSCRIPTINGLOGS`
   - `dev.localServer.link.enabled` -> `BLR_DEV_LOCALSERVER_LINK_ENABLED`

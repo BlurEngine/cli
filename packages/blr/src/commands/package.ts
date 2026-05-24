@@ -829,7 +829,11 @@ export async function runPackageCommand(
         }
     }
 
-    await buildProject(projectRoot, config, { production, debug });
+    await buildProject(projectRoot, config, {
+        production,
+        debug,
+        pipeline: "package",
+    });
 
     for (const target of targets) {
         const packaged =

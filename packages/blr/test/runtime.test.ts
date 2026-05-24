@@ -150,6 +150,9 @@ async function createInternalBebeLinkBdsStub(
     await mkdir(path.join(packageRoot, "internal", "link"), {
         recursive: true,
     });
+    await mkdir(path.join(packageRoot, "internal", "zones"), {
+        recursive: true,
+    });
     await writeJsonFile(path.join(packageRoot, "package.json"), {
         name: "@blurengine/bebe",
         version: "0.0.0",
@@ -157,6 +160,7 @@ async function createInternalBebeLinkBdsStub(
         exports: {
             ".": "./index.js",
             "./internal/link/bds": "./internal/link/bds.js",
+            "./internal/zones/editor": "./internal/zones/editor.js",
         },
     });
     await writeFile(
@@ -193,6 +197,17 @@ async function createInternalBebeLinkBdsStub(
         [
             "export function installBdsLinkTransport(options) {",
             "  globalThis.__blrLinkOptions = options;",
+            "}",
+            "",
+        ].join("\n"),
+        "utf8",
+    );
+    await writeFile(
+        path.join(packageRoot, "internal", "zones", "editor.js"),
+        [
+            "export function installZoneEditor(options) {",
+            "  globalThis.__blrZoneEditorInstalled = (globalThis.__blrZoneEditorInstalled ?? 0) + 1;",
+            "  globalThis.__blrZoneEditorOptions = options;",
             "}",
             "",
         ].join("\n"),
@@ -353,6 +368,161 @@ test("buildProject injects Bebe Link transport only into the BDS runtime bundle"
     assert.equal(bdsBundle.includes("127.0.0.1:19999"), true);
     assert.equal(bdsBundle.includes("__blrLinkContext"), true);
     assert.match(bdsBundle, /installBdsLinkTransport\(\{[^}]*context:/su);
+});
+
+test("buildProject injects the Bebe zone editor for dev builds", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-runtime-editor-dev-");
+    await createMinimalScriptProject(projectRoot);
+    await createInternalBebeLinkBdsStub(projectRoot);
+    await writeJsonFile(path.join(projectRoot, "package.json"), {
+        name: "script-project",
+        private: true,
+        type: "module",
+        dependencies: {
+            "@blurengine/bebe": "0.0.0",
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    await buildProject(projectRoot, config, {
+        production: false,
+        pipeline: "dev",
+    });
+
+    const offlineBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.js"),
+    );
+    const bdsBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.bds.js"),
+    );
+
+    assert.equal(offlineBundle.includes("__blrZoneEditorInstalled"), true);
+    assert.equal(bdsBundle.includes("__blrZoneEditorInstalled"), true);
+    assert.match(offlineBundle, /commandNamespace:\s*"bc_df"/);
+    assert.match(bdsBundle, /commandNamespace:\s*"bc_df"/);
+    assert.match(offlineBundle, /commandPermissionLevel:\s*0/);
+    assert.match(bdsBundle, /commandPermissionLevel:\s*0/);
+});
+
+test("buildProject skips the Bebe zone editor when dev injection is disabled", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-runtime-editor-dev-off-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createInternalBebeLinkBdsStub(projectRoot);
+    await writeJsonFile(path.join(projectRoot, "package.json"), {
+        name: "script-project",
+        private: true,
+        type: "module",
+        dependencies: {
+            "@blurengine/bebe": "0.0.0",
+        },
+    });
+    const configPath = path.join(projectRoot, "blr.config.json");
+    const configFile = await readJsonFile<Record<string, unknown>>(configPath);
+    await writeJsonFile(configPath, {
+        ...configFile,
+        bebe: {
+            zoneEditor: {
+                dev: false,
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    await buildProject(projectRoot, config, {
+        production: false,
+        pipeline: "dev",
+    });
+
+    const offlineBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.js"),
+    );
+    const bdsBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.bds.js"),
+    );
+
+    assert.equal(offlineBundle.includes("__blrZoneEditorInstalled"), false);
+    assert.equal(bdsBundle.includes("__blrZoneEditorInstalled"), false);
+});
+
+test("buildProject skips the Bebe zone editor for package builds by default", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-runtime-editor-package-off-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createInternalBebeLinkBdsStub(projectRoot);
+    await writeJsonFile(path.join(projectRoot, "package.json"), {
+        name: "script-project",
+        private: true,
+        type: "module",
+        dependencies: {
+            "@blurengine/bebe": "0.0.0",
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    await buildProject(projectRoot, config, {
+        production: false,
+        pipeline: "package",
+    });
+
+    const offlineBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.js"),
+    );
+    const bdsBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.bds.js"),
+    );
+
+    assert.equal(offlineBundle.includes("__blrZoneEditorInstalled"), false);
+    assert.equal(bdsBundle.includes("__blrZoneEditorInstalled"), false);
+});
+
+test("buildProject can include the Bebe zone editor in package builds", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-runtime-editor-package-on-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createInternalBebeLinkBdsStub(projectRoot);
+    await writeJsonFile(path.join(projectRoot, "package.json"), {
+        name: "script-project",
+        private: true,
+        type: "module",
+        dependencies: {
+            "@blurengine/bebe": "0.0.0",
+        },
+    });
+    const configPath = path.join(projectRoot, "blr.config.json");
+    const configFile = await readJsonFile<Record<string, unknown>>(configPath);
+    await writeJsonFile(configPath, {
+        ...configFile,
+        bebe: {
+            zoneEditor: {
+                package: true,
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    await buildProject(projectRoot, config, {
+        production: false,
+        pipeline: "package",
+    });
+
+    const offlineBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.js"),
+    );
+    const bdsBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.bds.js"),
+    );
+
+    assert.equal(offlineBundle.includes("__blrZoneEditorInstalled"), true);
+    assert.equal(bdsBundle.includes("__blrZoneEditorInstalled"), true);
+    assert.match(offlineBundle, /commandPermissionLevel:\s*1/);
+    assert.match(bdsBundle, /commandPermissionLevel:\s*1/);
 });
 
 test("buildProject strips direct Bebe Link usage from the offline runtime bundle", async (t) => {

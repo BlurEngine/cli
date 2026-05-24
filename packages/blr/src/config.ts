@@ -23,6 +23,8 @@ import { exists, listDirectories, readJson } from "./fs.js";
 import { normalizePackageTarget } from "./package-targets.js";
 import { assertProjectRelativePath } from "./project-paths.js";
 import type {
+    BebeDiagnosticPipeline,
+    BebeDiagnosticSeverity,
     BlurConfigFile,
     BlurProject,
     Language,
@@ -83,6 +85,24 @@ type ManifestShape = {
         uuid?: string;
         version?: unknown;
     }>;
+};
+type BebeZoneEditorPolicy = {
+    dev: boolean;
+    package: boolean;
+};
+
+const DEFAULT_BEBE_MISSING_REFERENCE_DIAGNOSTICS: Record<
+    BebeDiagnosticPipeline,
+    BebeDiagnosticSeverity
+> = {
+    dev: "warn",
+    build: "error",
+    package: "error",
+    check: "error",
+};
+const DEFAULT_BEBE_ZONE_EDITOR: BebeZoneEditorPolicy = {
+    dev: true,
+    package: false,
 };
 
 function ensureVersionTuple(
@@ -217,6 +237,45 @@ function ensureWorldSyncRuntimeMode(
         : fallback;
 }
 
+function ensureBebeDiagnosticSeverity(
+    value: unknown,
+    fallback: BebeDiagnosticSeverity,
+): BebeDiagnosticSeverity {
+    return value === "ignore" || value === "warn" || value === "error"
+        ? value
+        : fallback;
+}
+
+function resolveBebeDiagnosticPolicy(
+    value: unknown,
+    fallback: Record<BebeDiagnosticPipeline, BebeDiagnosticSeverity>,
+): Record<BebeDiagnosticPipeline, BebeDiagnosticSeverity> {
+    const record =
+        value && typeof value === "object" && !Array.isArray(value)
+            ? (value as Record<string, unknown>)
+            : {};
+    return {
+        dev: ensureBebeDiagnosticSeverity(record.dev, fallback.dev),
+        build: ensureBebeDiagnosticSeverity(record.build, fallback.build),
+        package: ensureBebeDiagnosticSeverity(record.package, fallback.package),
+        check: ensureBebeDiagnosticSeverity(record.check, fallback.check),
+    };
+}
+
+function resolveBebeZoneEditorPolicy(
+    input: unknown,
+    fallback: BebeZoneEditorPolicy,
+): BebeZoneEditorPolicy {
+    const record =
+        input && typeof input === "object" && !Array.isArray(input)
+            ? (input as Record<string, unknown>)
+            : {};
+    return {
+        dev: ensureBoolean(record.dev, fallback.dev),
+        package: ensureBoolean(record.package, fallback.package),
+    };
+}
+
 function resolvePackFeatureSelection(
     value: unknown,
     fallback: PackFeatureSelection,
@@ -242,6 +301,9 @@ function coerceBlurConfigFile(
     const raw = value as Record<string, unknown>;
     const minecraft = (raw.minecraft ?? {}) as Record<string, unknown>;
     const runtime = (raw.runtime ?? {}) as Record<string, unknown>;
+    const bebe = (raw.bebe ?? {}) as Record<string, unknown>;
+    const bebeDiagnostics = (bebe.diagnostics ?? {}) as Record<string, unknown>;
+    const bebeZoneEditor = (bebe.zoneEditor ?? {}) as Record<string, unknown>;
     const dev = (raw.dev ?? {}) as Record<string, unknown>;
     const upgrade = (raw.upgrade ?? {}) as Record<string, unknown>;
     const world = (raw.world ?? {}) as Record<string, unknown>;
@@ -402,6 +464,18 @@ function coerceBlurConfigFile(
                     ? runtime.sourcemap
                     : undefined,
             externalModules: ensureStringArray(runtime.externalModules, []),
+        },
+        bebe: {
+            diagnostics: {
+                missingReferences: resolveBebeDiagnosticPolicy(
+                    bebeDiagnostics.missingReferences,
+                    DEFAULT_BEBE_MISSING_REFERENCE_DIAGNOSTICS,
+                ),
+            },
+            zoneEditor: resolveBebeZoneEditorPolicy(
+                bebeZoneEditor,
+                DEFAULT_BEBE_ZONE_EDITOR,
+            ),
         },
         dev: {
             watch: {
@@ -767,6 +841,18 @@ export async function loadBlurConfig(
                     DEFAULT_EXTERNAL_MODULES,
                 ),
             ),
+        },
+        bebe: {
+            zoneEditor: resolveBebeZoneEditorPolicy(
+                configFile.bebe?.zoneEditor,
+                DEFAULT_BEBE_ZONE_EDITOR,
+            ),
+            diagnostics: {
+                missingReferences: resolveBebeDiagnosticPolicy(
+                    configFile.bebe?.diagnostics?.missingReferences,
+                    DEFAULT_BEBE_MISSING_REFERENCE_DIAGNOSTICS,
+                ),
+            },
         },
         packs: {
             behavior: behavior

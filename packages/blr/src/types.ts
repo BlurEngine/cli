@@ -10,6 +10,8 @@ export type WorldSyncRuntimeMode = "prompt" | "preserve" | "replace" | "backup";
 export type WorldPackageFormat = "tar.gz" | "zip" | "mcworld";
 export type WorldPackageLayout = "bedrock-root" | "com";
 export type WorldImageDimension = "overworld" | "nether" | "end";
+export type BebeDiagnosticSeverity = "ignore" | "warn" | "error";
+export type BebeDiagnosticPipeline = "dev" | "build" | "package" | "check";
 
 export type MinecraftProduct =
     | "BedrockGDK"
@@ -230,11 +232,71 @@ export interface BlurConfigRuntimeFile {
 }
 
 /**
+ * Per-pipeline severity overrides for a Bebe tooling diagnostic category.
+ */
+export interface BlurConfigBebeDiagnosticPolicyFile {
+    /**
+     * Severity during `blr dev`.
+     */
+    dev?: BebeDiagnosticSeverity;
+    /**
+     * Severity during `blr build`.
+     */
+    build?: BebeDiagnosticSeverity;
+    /**
+     * Severity during `blr package`.
+     */
+    package?: BebeDiagnosticSeverity;
+    /**
+     * Severity during validation/check-style pipelines.
+     */
+    check?: BebeDiagnosticSeverity;
+}
+
+/**
+ * Bebe tooling diagnostics configuration.
+ */
+export interface BlurConfigBebeDiagnosticsFile {
+    /**
+     * How missing soft references, such as a quest referencing an absent zone, should be reported.
+     */
+    missingReferences?: BlurConfigBebeDiagnosticPolicyFile;
+}
+
+/**
+ * In-game Bebe zone editor injection policy.
+ */
+export interface BlurConfigBebeZoneEditorFile {
+    /**
+     * Whether `blr dev` injects the editor runtime.
+     */
+    dev?: boolean;
+    /**
+     * Whether `blr package` includes the editor runtime in packaged script bundles.
+     */
+    package?: boolean;
+}
+
+/**
+ * Project-level Bebe integration configuration.
+ */
+export interface BlurConfigBebeFile {
+    /**
+     * Bebe tooling diagnostic behavior.
+     */
+    diagnostics?: BlurConfigBebeDiagnosticsFile;
+    /**
+     * Zone editor injection policy.
+     */
+    zoneEditor?: BlurConfigBebeZoneEditorFile;
+}
+
+/**
  * Watch-mode defaults for `blr dev`.
  */
 export interface BlurConfigWatchFile {
     /**
-     * Project-relative watch path patterns. Files under `src/` reload local-server; pack paths resync without reload only when explicitly watched.
+     * Project-relative watch path patterns. Files under `src/` reload local-server; pack paths resync without reload only when explicitly watched. Project-installed Bebe tooling can add asset source files such as `zones.json` automatically.
      */
     paths?: string[];
     /**
@@ -432,6 +494,10 @@ export interface BlurConfigFile {
      */
     runtime?: BlurConfigRuntimeFile;
     /**
+     * Bebe integration defaults.
+     */
+    bebe?: BlurConfigBebeFile;
+    /**
      * Project-level defaults for `blr dev`.
      */
     dev?: BlurConfigDevFile;
@@ -500,6 +566,18 @@ export interface BlurProject {
         target: string;
         sourcemap: boolean;
         externalModules: string[];
+    };
+    bebe: {
+        zoneEditor: {
+            dev: boolean;
+            package: boolean;
+        };
+        diagnostics: {
+            missingReferences: Record<
+                BebeDiagnosticPipeline,
+                BebeDiagnosticSeverity
+            >;
+        };
     };
     packs: {
         behavior?: PackManifestConfig;

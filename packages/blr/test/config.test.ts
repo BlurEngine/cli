@@ -256,6 +256,107 @@ test("loadBlurConfig defaults dev.watch.paths to runtime source only", async (t)
     assert.deepEqual(config.dev.watch.paths, ["src/**/*"]);
 });
 
+test("loadBlurConfig defaults Bebe missing-reference diagnostics by pipeline", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.bebe.diagnostics.missingReferences, {
+        dev: "warn",
+        build: "error",
+        package: "error",
+        check: "error",
+    });
+    assert.deepEqual(config.bebe.zoneEditor, {
+        dev: true,
+        package: false,
+    });
+});
+
+test("loadBlurConfig respects configured Bebe missing-reference diagnostics", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        bebe: {
+            diagnostics: {
+                missingReferences: {
+                    dev: "ignore",
+                    build: "warn",
+                    package: "error",
+                    check: "warn",
+                },
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.bebe.diagnostics.missingReferences, {
+        dev: "ignore",
+        build: "warn",
+        package: "error",
+        check: "warn",
+    });
+});
+
+test("loadBlurConfig respects configured Bebe zone editor injection policy", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+        bebe: {
+            zoneEditor: {
+                dev: false,
+                package: true,
+            },
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.bebe.zoneEditor, {
+        dev: false,
+        package: true,
+    });
+});
+
+test("loadBlurConfig respects environment overrides for Bebe zone editor injection", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "bc_df",
+    });
+
+    const previousDev = process.env.BLR_BEBE_ZONEEDITOR_DEV;
+    const previousPackage = process.env.BLR_BEBE_ZONEEDITOR_PACKAGE;
+    process.env.BLR_BEBE_ZONEEDITOR_DEV = "false";
+    process.env.BLR_BEBE_ZONEEDITOR_PACKAGE = "true";
+    t.after(() => {
+        if (typeof previousDev === "undefined") {
+            delete process.env.BLR_BEBE_ZONEEDITOR_DEV;
+        } else {
+            process.env.BLR_BEBE_ZONEEDITOR_DEV = previousDev;
+        }
+        if (typeof previousPackage === "undefined") {
+            delete process.env.BLR_BEBE_ZONEEDITOR_PACKAGE;
+        } else {
+            process.env.BLR_BEBE_ZONEEDITOR_PACKAGE = previousPackage;
+        }
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.bebe.zoneEditor, {
+        dev: false,
+        package: true,
+    });
+});
+
 test("loadBlurConfig accepts package.defaultTarget package formats", async (t) => {
     for (const target of [
         "mctemplate",

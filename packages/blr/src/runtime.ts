@@ -3,6 +3,11 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { build, type Loader, type Plugin } from "esbuild";
 import {
+    bakeBebeAssets,
+    toProjectImportSpecifier,
+    type BebePipelineIntent,
+} from "./bebe-tooling.js";
+import {
     resolvePackFeatureSelection,
     type PackFeatureSelectionOverride,
 } from "./content.js";
@@ -26,6 +31,7 @@ import {
 } from "./fs.js";
 import { stripOfflineBebeLink } from "./link-strip.js";
 import type {
+    BebeDiagnosticSeverity,
     BlurMachineSettings,
     BlurProject,
     MinecraftProduct,
@@ -49,7 +55,19 @@ type BuildProjectOptions = {
         enabled?: boolean;
         logReady?: boolean;
     };
+    pipeline?: BebePipelineIntent;
+    zoneEditor?: {
+        enabled?: boolean;
+    };
 };
+
+type RuntimeBuildEntry = {
+    contents?: string;
+    sourcefile?: string;
+};
+
+const MINECRAFT_COMMAND_PERMISSION_ANY = 0;
+const MINECRAFT_COMMAND_PERMISSION_GAME_DIRECTORS = 1;
 
 export type ResolvedBuildArtifacts = {
     distRoot: string;
@@ -80,6 +98,8 @@ const SERVER_ONLY_MANIFEST_MODULES = new Set([
     "@minecraft/server-net",
 ]);
 const RUNTIME_SOURCE_FILTER = /\.[cm]?[jt]sx?$/;
+const BEBE_TOOLING_IMPORT_PATTERN =
+    /(?:import|export)\s+(?:[\s\S]*?\s+from\s*)?["']@blurengine\/bebe\/tooling(?:\/[^"']*)?["']|import\s*\(\s*["']@blurengine\/bebe\/tooling(?:\/[^"']*)?["']\s*\)/u;
 
 function stripVersionRange(version: string): string {
     return version.replace(/^[~^]/u, "");
@@ -152,11 +172,37 @@ async function updateBehaviorManifestForVariant(
     await writeJson(manifestPath, manifest);
 }
 
-function toImportSpecifier(projectRoot: string, targetPath: string): string {
-    const relativePath = path
-        .relative(projectRoot, targetPath)
-        .replace(/\\/g, "/");
-    return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+function createBebeAssetsRuntimeBuildEntry(
+    projectRoot: string,
+    entryPath: string,
+    bootstrapLines: readonly string[],
+    installZoneEditor: boolean,
+    zoneEditorCommandNamespace: string,
+    zoneEditorCommandPermissionLevel: number,
+): RuntimeBuildEntry {
+    if (!installZoneEditor && bootstrapLines.length === 0) {
+        return {};
+    }
+
+    const userEntrySpecifier = toProjectImportSpecifier(projectRoot, entryPath);
+    const lines: string[] = [];
+    if (installZoneEditor) {
+        lines.push(
+            'import { installZoneEditor } from "@blurengine/bebe/internal/zones/editor";',
+        );
+    }
+    lines.push(...bootstrapLines);
+    if (installZoneEditor) {
+        lines.push(
+            `installZoneEditor({ commandNamespace: ${JSON.stringify(zoneEditorCommandNamespace)}, commandPermissionLevel: ${zoneEditorCommandPermissionLevel} });`,
+        );
+    }
+    lines.push(`void import(${JSON.stringify(userEntrySpecifier)});`, "");
+
+    return {
+        contents: lines.join("\n"),
+        sourcefile: "bebe-assets-entry.js",
+    };
 }
 
 function resolveDefaultLinkBaseUrl(): string {
@@ -212,6 +258,7 @@ function createOfflineLinkStripPlugin(projectRoot: string): Plugin {
                     }
 
                     const sourceText = await readText(args.path);
+                    assertNoRuntimeBebeToolingImport(sourceText, args.path);
                     return {
                         contents: stripOfflineBebeLink(sourceText, args.path),
                         loader: getEsbuildLoader(args.path),
@@ -223,7 +270,35 @@ function createOfflineLinkStripPlugin(projectRoot: string): Plugin {
     };
 }
 
-async function hasResolvableBebeLinkBds(projectRoot: string): Promise<boolean> {
+function assertNoRuntimeBebeToolingImport(
+    sourceText: string,
+    filePath: string,
+): void {
+    if (!BEBE_TOOLING_IMPORT_PATTERN.test(sourceText)) {
+        return;
+    }
+
+    throw new Error(
+        `Runtime code cannot import @blurengine/bebe/tooling. Move build-only Bebe tooling usage out of ${path.basename(filePath)}.`,
+    );
+}
+
+function resolveBebeToolingDiagnosticSeverity(
+    config: BlurProject,
+    pipeline: BebePipelineIntent,
+    category: string,
+): BebeDiagnosticSeverity | undefined {
+    if (category === "missingReferences") {
+        return config.bebe.diagnostics.missingReferences[pipeline];
+    }
+
+    return undefined;
+}
+
+async function hasResolvableProjectBebeSubpath(
+    projectRoot: string,
+    subpath: string,
+): Promise<boolean> {
     const packageJsonPath = path.join(projectRoot, "package.json");
     if (!(await exists(packageJsonPath))) {
         return false;
@@ -248,49 +323,88 @@ async function hasResolvableBebeLinkBds(projectRoot: string): Promise<boolean> {
     }
 
     try {
-        createRequire(packageJsonPath).resolve(
-            "@blurengine/bebe/internal/link/bds",
-        );
+        createRequire(packageJsonPath).resolve(subpath);
         return true;
     } catch {
         return false;
     }
 }
 
+function resolveZoneEditorEnabled(
+    config: BlurProject,
+    pipeline: BebePipelineIntent,
+    options: BuildProjectOptions,
+): boolean {
+    if (typeof options.zoneEditor?.enabled === "boolean") {
+        return options.zoneEditor.enabled;
+    }
+    if (pipeline === "dev") {
+        return config.bebe.zoneEditor.dev;
+    }
+    if (pipeline === "package") {
+        return config.bebe.zoneEditor.package;
+    }
+
+    return false;
+}
+
 async function createBdsRuntimeBuildEntry(
     projectRoot: string,
     entryPath: string,
     options: BuildProjectOptions,
-): Promise<{
-    contents?: string;
-    sourcefile?: string;
-}> {
-    if (
-        options.link?.enabled === false ||
-        !(await hasResolvableBebeLinkBds(projectRoot))
-    ) {
+    bootstrapLines: readonly string[],
+    installZoneEditor: boolean,
+    zoneEditorCommandNamespace: string,
+    zoneEditorCommandPermissionLevel: number,
+): Promise<RuntimeBuildEntry> {
+    const installLink =
+        options.link?.enabled !== false &&
+        (await hasResolvableProjectBebeSubpath(
+            projectRoot,
+            "@blurengine/bebe/internal/link/bds",
+        ));
+    if (!installLink && !installZoneEditor && bootstrapLines.length === 0) {
         return {};
     }
 
     const baseUrl = options.link?.baseUrl ?? resolveDefaultLinkBaseUrl();
-    const userEntrySpecifier = toImportSpecifier(projectRoot, entryPath);
-    const linkOptions = [
-        `baseUrl: ${JSON.stringify(baseUrl)}`,
-        "context: __blrLinkContext",
-    ];
-    if (options.link?.logReady) {
-        linkOptions.push("logger: console");
-    }
+    const userEntrySpecifier = toProjectImportSpecifier(projectRoot, entryPath);
+    const lines = [];
 
-    return {
-        contents: [
+    if (installLink) {
+        lines.push(
             'import { Context } from "@blurengine/bebe";',
             'import { installBdsLinkTransport } from "@blurengine/bebe/internal/link/bds";',
-            "const __blrLinkContext = new Context();",
-            `installBdsLinkTransport({ ${linkOptions.join(", ")} });`,
-            `void import(${JSON.stringify(userEntrySpecifier)});`,
-            "",
-        ].join("\n"),
+        );
+    }
+    if (installZoneEditor) {
+        lines.push(
+            'import { installZoneEditor } from "@blurengine/bebe/internal/zones/editor";',
+        );
+    }
+    lines.push(...bootstrapLines);
+    if (installLink) {
+        lines.push("const __blrLinkContext = new Context();");
+    }
+    if (installLink) {
+        const linkOptions = [
+            `baseUrl: ${JSON.stringify(baseUrl)}`,
+            "context: __blrLinkContext",
+        ];
+        if (options.link?.logReady) {
+            linkOptions.push("logger: console");
+        }
+        lines.push(`installBdsLinkTransport({ ${linkOptions.join(", ")} });`);
+    }
+    if (installZoneEditor) {
+        lines.push(
+            `installZoneEditor({ commandNamespace: ${JSON.stringify(zoneEditorCommandNamespace)}, commandPermissionLevel: ${zoneEditorCommandPermissionLevel} });`,
+        );
+    }
+    lines.push(`void import(${JSON.stringify(userEntrySpecifier)});`, "");
+
+    return {
+        contents: lines.join("\n"),
         sourcefile: "bebe-link-bds-entry.js",
     };
 }
@@ -629,6 +743,7 @@ export async function buildProject(
     options: BuildProjectOptions,
 ): Promise<ResolvedBuildArtifacts> {
     const artifacts = resolveBuildArtifacts(projectRoot, config);
+    const pipeline = options.pipeline ?? "build";
     const hasRuntimeEntry = config.runtime.entry.trim().length > 0;
     const entryPath = hasRuntimeEntry
         ? path.resolve(projectRoot, config.runtime.entry)
@@ -639,6 +754,7 @@ export async function buildProject(
         bdsOutFile: path.relative(projectRoot, artifacts.runtimeBdsOutFilePath),
         stageRoot: path.relative(projectRoot, artifacts.stageRoot),
         production: options.production,
+        pipeline,
         externalModules: config.runtime.externalModules,
     });
 
@@ -653,11 +769,54 @@ export async function buildProject(
     }
 
     await stageProjectContent(projectRoot, config, artifacts, options.debug);
+    const bakedBebeAssets = await bakeBebeAssets({
+        debug: options.debug,
+        distRoot: artifacts.distRoot,
+        hasRuntimeEntry,
+        pipeline,
+        projectRoot,
+        resolveDiagnosticSeverity: (category) =>
+            resolveBebeToolingDiagnosticSeverity(config, pipeline, category),
+        stageScriptsDirectories: [
+            artifacts.stageBehaviorScriptsDirectory,
+            artifacts.stageBdsBehaviorScriptsDirectory,
+        ].filter((directory): directory is string => Boolean(directory)),
+    });
+    const installZoneEditor =
+        resolveZoneEditorEnabled(config, pipeline, options) &&
+        (await hasResolvableProjectBebeSubpath(
+            projectRoot,
+            "@blurengine/bebe/internal/zones/editor",
+        ));
+    const zoneEditorCommandPermissionLevel =
+        pipeline === "dev"
+            ? MINECRAFT_COMMAND_PERMISSION_ANY
+            : MINECRAFT_COMMAND_PERMISSION_GAME_DIRECTORS;
+
     if (hasRuntimeEntry) {
         await ensureDirectory(path.dirname(artifacts.runtimeOutFilePath));
+        const runtimeEntry = createBebeAssetsRuntimeBuildEntry(
+            projectRoot,
+            entryPath,
+            bakedBebeAssets.bootstrapLines,
+            installZoneEditor,
+            config.namespace,
+            zoneEditorCommandPermissionLevel,
+        );
 
         await build({
-            entryPoints: [entryPath],
+            ...(runtimeEntry.contents
+                ? {
+                      stdin: {
+                          contents: runtimeEntry.contents,
+                          loader: "js",
+                          resolveDir: projectRoot,
+                          sourcefile: runtimeEntry.sourcefile,
+                      },
+                  }
+                : {
+                      entryPoints: [entryPath],
+                  }),
             outfile: artifacts.runtimeOutFilePath,
             bundle: true,
             format: "esm",
@@ -674,6 +833,10 @@ export async function buildProject(
             projectRoot,
             entryPath,
             options,
+            bakedBebeAssets.bootstrapLines,
+            installZoneEditor,
+            config.namespace,
+            zoneEditorCommandPermissionLevel,
         );
         await build({
             ...(bdsEntry.contents

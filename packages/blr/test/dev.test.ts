@@ -464,6 +464,15 @@ test("resolveProjectWatchChangeAction reloads source changes, syncs pack changes
         kind: "ignore",
         message: "[dev] change ignored: package.json. Restart dev to apply it.",
     });
+    assert.deepEqual(
+        resolveProjectWatchChangeAction("zones.json", {
+            assetSourcePaths: ["zones.json"],
+        }),
+        {
+            kind: "reload",
+            pipelineMode: "reload",
+        },
+    );
     assert.deepEqual(resolveProjectWatchChangeAction("scripts/shared.ts"), {
         kind: "ignore",
         message:

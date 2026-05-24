@@ -19,6 +19,7 @@ my-project/
   .env.local       # optional, user-created, ignored
   src/             # only when scripting is enabled
     main.ts | main.js
+  zones.json       # optional, user-created zone definitions
   .gitignore
   AGENTS.md
   AGENTS.project.md
@@ -80,6 +81,8 @@ Optional later additions may include:
 
 - `package.defaultTarget` when the project wants bare `blr package` to resolve to a specific target
 - `world` backend configuration when the project wants remote world storage
+- `bebe.diagnostics.missingReferences` when the project wants to choose whether missing soft references are warnings, errors, or ignored per pipeline
+- `bebe.zoneEditor` when the project wants to disable the in-game Bebe zone editor during `blr dev` or intentionally include it during `blr package`
 
 ### `AGENTS.md`
 
@@ -119,8 +122,54 @@ Build note:
 
 - `blr build` stages canonical output into `dist/stage/`
 - when a runtime entry exists, the bundled runtime still writes to `runtime.outFile` first and is then synced into `dist/stage/behavior_packs/<packName>/scripts/`
+- when `zones.json` exists, `blr` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, then injects a `Zones.load(...)` bootstrap ahead of the authored runtime entry
 - `blr dev`, `blr build --local-deploy`, and `blr package` all consume the staged output
 - `blr` does not rewrite `behavior_packs/<packName>/scripts/main.js` inside the project by default
+
+### `zones.json`
+
+Optional authored Bebe zone pack.
+
+Purpose:
+
+- stores committed zone definitions that creators and tooling can edit
+- keeps zone source separate from runtime code while still loading through `@blurengine/bebe`
+- acts as the source file that future in-game editing tools can update after an explicit save
+
+Shape:
+
+```json
+{
+  "zones": [
+    {
+      "id": "spawn",
+      "dimension": "minecraft:overworld",
+      "extent": {
+        "kind": "polygon",
+        "points": [
+          [0, 0],
+          [40, 0],
+          [40, 40],
+          [0, 40]
+        ],
+        "y": { "min": 60, "max": 90 }
+      }
+    }
+  ]
+}
+```
+
+Behaviour:
+
+- omitted by `blr create`; projects add it only when they need authored zones
+- requires scripting and a project-installed `@blurengine/bebe` version that exposes `@blurengine/bebe/tooling/node`
+- supports `block`, `box`, simple vertical `polygon`, and `infinite` extents
+- Bebe validates duplicate zone ids per dimension during build
+- writes the normalised and compiled pack to `dist/generated/bebe/zones.json`
+- copies the baked pack to staged script output at `scripts/generated/bebe/zones.json`
+- bundles a generated bootstrap so `Zones.load(...)` runs before the authored runtime entry
+- `blr dev` watches this file automatically when `watch-scripts` is enabled and reloads the local server after rebaking it
+- during `blr dev --local-server`, Bebe's zone draft save event writes this file through the same project-installed tooling surface and skips the write when the source content is unchanged
 
 ### `behavior_packs/<packName>/manifest.json`
 
@@ -304,6 +353,10 @@ Typical contents:
 
 The `behavior_packs` variant is used for offline/local Minecraft deployment. The `bds_behavior_packs` variant is used for local-server and standalone behavior-pack packaging. Resource packs remain shared.
 
+When `zones.json` exists, both behavior-pack script variants include
+`scripts/generated/bebe/zones.json`, and both bundled scripts load that baked pack
+through `Zones` before running authored code.
+
 When a project uses `Link` from `@blurengine/bebe`, direct `Link` calls are stripped from the offline behavior-pack script bundle and kept in the BDS script bundle.
 `blr` injects and owns the BDS Link transport in the BDS bundle, so generated projects should use `Link` without manually installing the transport.
 Dynamic Link usage such as assigning or destructuring `Link.event` or `Link.snapshot` fails the offline build with a clear error because `blr` cannot safely erase it.
@@ -312,15 +365,18 @@ During `blr dev --local-server`, the local Link server also exposes the built-in
 `Link.snapshot(...)` marks an event as latest-retained state, so the local Link server keeps the newest value separately from the default stream log.
 The Link bridge assigns fixed-length base64 UUIDv7 event ids for replay and dedupe and exposes them through `event.meta`.
 
+When `bebe.zoneEditor.dev` is `true`, `blr dev` injects the internal Bebe zone editor runtime into script bundles when the project-installed Bebe package supports it. This is enabled by default for development. The editor command uses the project namespace, for example `/<namespace>:zone`. `bebe.zoneEditor.package` defaults to `false`, so packaged output excludes the editor unless the project explicitly opts in.
+
 ### Link Responsibility Boundary
 
 Generated projects own authored Link event names, payloads, and gameplay behavior. For example, a project may choose to emit a project-specific ready event or publish a player list.
 
 Bebe owns the public `Link` API imported from `@blurengine/bebe`, including the `Link.event(...)`, `Link.snapshot(...)`, and `Link.on(...)` contract, the `LinkEvent` shape, safe unavailable behavior, retained inbound registrations, transport status, capabilities, transport-generated metadata, and BDS-owned smoke behavior such as `bebe.link.ready`.
 
-`blr` owns the local Link server, dashboard host, HTTP API, default dashboard send event (`project.message`), BDS transport injection, offline Link stripping, and selection of the correct staged behavior-pack variant for local-deploy, local-server, and packaging.
+`blr` owns the local Link server, dashboard host, HTTP API, default dashboard send event (`project.message`), Bebe's zone draft save bridge to `zones.json`, BDS transport injection, zone editor runtime injection policy, offline Link stripping, and selection of the correct staged behavior-pack variant for local-deploy, local-server, and packaging.
 
 Generated project code should not import Bebe internal transport paths such as `@blurengine/bebe/internal/link/bds`. Those paths exist for `blr` bootstrap/runtime wiring, not gameplay code.
+Generated project code also should not import `@blurengine/bebe/tooling/*`. Tooling subpaths are Node-only build surfaces that `blr` resolves from the project installation when it needs to bake Bebe assets.
 
 ### `dist/packages/`
 

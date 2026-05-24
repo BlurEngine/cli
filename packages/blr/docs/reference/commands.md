@@ -77,7 +77,9 @@ When watch mode is active:
 
 - `blr` prints `[dev] Watching for changes...` once any enabled watcher is ready
 - `watch-scripts` uses the configured project-relative glob-style watch paths
+- `watch-scripts` also watches Bebe asset source files exposed by the project-installed `@blurengine/bebe/tooling/node` compilers, such as `zones.json`
 - runtime source changes trigger a rebuild and local-server `reload`
+- Bebe asset source changes trigger a rebuild and local-server `reload` so baked JSON and generated bootstrap code stay current during development
 - `.test.*` files do not trigger rebuilds or reloads
 - behavior-pack and resource-pack changes are not watched by default; if explicitly watched, they trigger a rebuild and resync without sending `reload`
 - `blr.config.json` and `package.json` are not watched by default; if you add them to `dev.watch.paths`, `blr` tells you to restart `dev` instead of reloading
@@ -115,9 +117,11 @@ When `local-server` is live:
 - if the managed server exits, `dev` shuts down its watch session too
 - when `dev.localServer.link.enabled` is `true`, `blr` also starts the local Link bridge server on `dev.localServer.link.host` and `dev.localServer.link.port`
 - when `dev.localServer.link.dashboard.enabled` is `true`, that Link server URL also serves the built-in dashboard
+- when `bebe.zoneEditor.dev` is `true`, `blr dev` injects the internal Bebe zone editor runtime into script bundles when the project-installed Bebe package exposes it; the editor command uses the project namespace, for example `/<namespace>:zone`
 - `Link.event(...)`, `Link.snapshot(...)`, and `Link.on(...)` own their availability checks, so authored code should call them directly; response flows should be handled as separate inbound events with `Link.on(...)`
 - `Link.snapshot(...)` marks an event as latest-retained state, so the local Link server keeps the newest value separately from the default stream log
 - projects own authored Link event names, payloads, and gameplay behavior; Bebe/`blr` own built-in Link smoke behavior such as `bebe.link.ready`, while the dashboard defaults to a generic `project.message` send event
+- Bebe's zone draft save event is handled by `blr`: it validates the draft through the project-installed `@blurengine/bebe/tooling/node` surface and writes root `zones.json` only when the source content changes
 - the Link bridge assigns fixed-length base64 UUIDv7 event ids for replay and dedupe and exposes them through `event.meta`
 - if the Link bridge server cannot start, `dev` warns and continues without Link
 
@@ -215,11 +219,22 @@ Build output:
 - BDS behavior pack output is copied to `dist/stage/bds_behavior_packs/<packName>` when the project includes a behavior pack
 - resource pack source is copied to `dist/stage/resource_packs/<packName>` when the project includes a resource pack
 - when the project has a runtime entry, the offline bundled script is copied into the staged behavior pack `scripts/` directory and the BDS bundled script is copied into the staged BDS behavior pack `scripts/` directory
+- when root `zones.json` exists, `blr build` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, writes the normalised and compiled pack to `dist/generated/bebe/zones.json`, copies it to `scripts/generated/bebe/zones.json` in both staged behavior-pack variants, and injects `Zones.load(...)` before the authored runtime entry
+- `zones.json` requires scripting and a project-installed `@blurengine/bebe` version that exposes `@blurengine/bebe/tooling/node`
 - direct `Link` calls imported from `@blurengine/bebe` are stripped from the offline bundle and kept in the BDS bundle
 - `blr` injects and owns the BDS Link transport in the BDS bundle; generated projects should use `Link` without manually installing the transport
 - generated project code should not import Bebe internal transport paths; those are reserved for `blr` bootstrap/runtime wiring
+- generated project code should not import `@blurengine/bebe/tooling/*`; those Node-only build surfaces are resolved by `blr` when it bakes Bebe assets
 - dynamic Link usage such as assigning or destructuring `Link.event` or `Link.snapshot` fails the offline build with a clear error because `blr` cannot safely erase it
 - `local-deploy` consumes the offline staged behavior pack; `local-server` consumes the BDS staged behavior pack
+
+Bebe integration:
+
+- `bebe.diagnostics.missingReferences.dev` defaults to `warn`
+- `bebe.diagnostics.missingReferences.build`, `.package`, and `.check` default to `error`
+- supported severities are `ignore`, `warn`, and `error`
+- `bebe.zoneEditor.dev` defaults to `true`, so `blr dev` injects the in-game zone editor runtime when supported by the installed Bebe package; the editor command uses the project namespace, for example `/<namespace>:zone`
+- `bebe.zoneEditor.package` defaults to `false`; set it to `true` only when packaged output should intentionally include the editor runtime
 
 Flags:
 

@@ -42,6 +42,10 @@
           "$ref": "#/definitions/BlurConfigRuntimeFile",
           "description": "Optional script build overrides."
         },
+        "bebe": {
+          "$ref": "#/definitions/BlurConfigBebeFile",
+          "description": "Bebe integration defaults."
+        },
         "dev": {
           "$ref": "#/definitions/BlurConfigDevFile",
           "description": "Project-level defaults for `blr dev`."
@@ -297,6 +301,74 @@
       "additionalProperties": false,
       "description": "Optional script build overrides."
     },
+    "BlurConfigBebeFile": {
+      "type": "object",
+      "properties": {
+        "diagnostics": {
+          "$ref": "#/definitions/BlurConfigBebeDiagnosticsFile",
+          "description": "Bebe tooling diagnostic behavior."
+        },
+        "zoneEditor": {
+          "$ref": "#/definitions/BlurConfigBebeZoneEditorFile",
+          "description": "Zone editor injection policy."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Project-level Bebe integration configuration."
+    },
+    "BlurConfigBebeDiagnosticsFile": {
+      "type": "object",
+      "properties": {
+        "missingReferences": {
+          "$ref": "#/definitions/BlurConfigBebeDiagnosticPolicyFile",
+          "description": "How missing soft references, such as a quest referencing an absent zone, should be reported."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Bebe tooling diagnostics configuration."
+    },
+    "BlurConfigBebeDiagnosticPolicyFile": {
+      "type": "object",
+      "properties": {
+        "dev": {
+          "$ref": "#/definitions/BebeDiagnosticSeverity",
+          "description": "Severity during `blr dev`."
+        },
+        "build": {
+          "$ref": "#/definitions/BebeDiagnosticSeverity",
+          "description": "Severity during `blr build`."
+        },
+        "package": {
+          "$ref": "#/definitions/BebeDiagnosticSeverity",
+          "description": "Severity during `blr package`."
+        },
+        "check": {
+          "$ref": "#/definitions/BebeDiagnosticSeverity",
+          "description": "Severity during validation/check-style pipelines."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Per-pipeline severity overrides for a Bebe tooling diagnostic category."
+    },
+    "BebeDiagnosticSeverity": {
+      "type": "string",
+      "enum": ["ignore", "warn", "error"]
+    },
+    "BlurConfigBebeZoneEditorFile": {
+      "type": "object",
+      "properties": {
+        "dev": {
+          "type": "boolean",
+          "description": "Whether `blr dev` injects the editor runtime."
+        },
+        "package": {
+          "type": "boolean",
+          "description": "Whether `blr package` includes the editor runtime in packaged script bundles."
+        }
+      },
+      "additionalProperties": false,
+      "description": "In-game Bebe zone editor injection policy."
+    },
     "BlurConfigDevFile": {
       "type": "object",
       "properties": {
@@ -324,7 +396,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Project-relative watch path patterns. Files under `src/` reload local-server; pack paths resync without reload only when explicitly watched."
+          "description": "Project-relative watch path patterns. Files under `src/` reload local-server; pack paths resync without reload only when explicitly watched. Project-installed Bebe tooling can add asset source files such as `zones.json` automatically."
         },
         "debounceMs": {
           "type": "number",

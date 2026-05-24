@@ -25,6 +25,10 @@ import { loadBlurConfig } from "../config.js";
 import { createDebugLogger, resolveDebugEnabled } from "../debug.js";
 import { resolveMachineSettings } from "../environment.js";
 import { BLR_CONFIG_FILE, BLR_ENV_BDS_VERSION } from "../constants.js";
+import {
+    createBebeLinkEventHandler,
+    resolveBebeAssetSourcePaths,
+} from "../bebe-tooling.js";
 import { LinkServer } from "../link-server.js";
 import {
     applyMinecraftTargetVersion,
@@ -172,6 +176,9 @@ type ProjectWatchChangeAction =
           kind: "reload";
           pipelineMode: "reload";
       };
+type ProjectWatchChangeActionOptions = {
+    readonly assetSourcePaths?: readonly string[];
+};
 type WatchPlan = {
     patterns: string[];
     roots: string[];
@@ -207,6 +214,7 @@ export function mergePipelineModes(
 
 export function resolveProjectWatchChangeAction(
     targetPath: string,
+    options: ProjectWatchChangeActionOptions = {},
 ): ProjectWatchChangeAction {
     const normalizedPath = normalizeWatchPath(targetPath).replace(/\/+$/, "");
 
@@ -222,6 +230,13 @@ export function resolveProjectWatchChangeAction(
             kind: "ignore",
             message:
                 "[dev] change ignored: package.json. Restart dev to apply it.",
+        };
+    }
+
+    if (isAssetSourcePath(normalizedPath, options.assetSourcePaths ?? [])) {
+        return {
+            kind: "reload",
+            pipelineMode: "reload",
         };
     }
 
@@ -255,6 +270,17 @@ export function resolveProjectWatchChangeAction(
         kind: "reload",
         pipelineMode: "reload",
     };
+}
+
+function isAssetSourcePath(
+    normalizedPath: string,
+    assetSourcePaths: readonly string[],
+): boolean {
+    return assetSourcePaths.some(
+        (sourcePath) =>
+            normalizeWatchPath(sourcePath).replace(/\/+$/, "") ===
+            normalizedPath,
+    );
 }
 
 function deriveWatchRoot(pattern: string): string {
@@ -2013,8 +2039,9 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     );
     const machineSettings = machine ?? resolveCurrentMachine();
     machine = machineSettings;
+    const bebeAssetSourcePaths = await resolveBebeAssetSourcePaths(projectRoot);
     const scriptWatchPatterns = filterScriptWatchPatterns(
-        config.dev.watch.paths,
+        [...config.dev.watch.paths, ...bebeAssetSourcePaths],
         selectedWorld.worldSourcePath,
     );
     const scriptWatchPlan = createWatchPlan(scriptWatchPatterns);
@@ -2028,6 +2055,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     debug.log("dev", "resolved dev command", {
         projectRoot,
         selectedWorld,
+        bebeAssetSourcePaths,
         watchPaths: scriptWatchPlan.patterns,
         watchRoots: scriptWatchPlan.roots,
         watchDebounceMs: config.dev.watch.debounceMs,
@@ -2170,7 +2198,15 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         resolved.localServer,
     );
     if (linkOptions) {
-        linkServer = new LinkServer(linkOptions);
+        linkServer = new LinkServer({
+            ...linkOptions,
+            onEvent: createBebeLinkEventHandler({
+                projectRoot,
+                log(message) {
+                    console.log(message);
+                },
+            }),
+        });
         try {
             await linkServer.start();
             console.log(`[dev] Link server listening at ${linkServer.url}.`);
@@ -2362,6 +2398,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         await buildProject(projectRoot, config, {
             production: resolved.production,
             debug,
+            pipeline: "dev",
             link: linkServer
                 ? {
                       baseUrl: linkServer.url,
@@ -2623,7 +2660,12 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 return;
             }
 
-            const watchAction = resolveProjectWatchChangeAction(normalizedPath);
+            const watchAction = resolveProjectWatchChangeAction(
+                normalizedPath,
+                {
+                    assetSourcePaths: bebeAssetSourcePaths,
+                },
+            );
             if (watchAction.kind === "ignore") {
                 debug.log("watch", "ignored project file event", {
                     eventName,

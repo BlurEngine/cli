@@ -40,6 +40,24 @@ const CONFIG_ENV_SPECS: ConfigEnvSpec[] = [
     { path: ["runtime", "target"], kind: "string" },
     { path: ["runtime", "sourcemap"], kind: "boolean" },
     { path: ["runtime", "externalModules"], kind: "stringArray" },
+    {
+        path: ["bebe", "diagnostics", "missingReferences", "dev"],
+        kind: "string",
+    },
+    {
+        path: ["bebe", "diagnostics", "missingReferences", "build"],
+        kind: "string",
+    },
+    {
+        path: ["bebe", "diagnostics", "missingReferences", "package"],
+        kind: "string",
+    },
+    {
+        path: ["bebe", "diagnostics", "missingReferences", "check"],
+        kind: "string",
+    },
+    { path: ["bebe", "zoneEditor", "dev"], kind: "boolean" },
+    { path: ["bebe", "zoneEditor", "package"], kind: "boolean" },
     { path: ["dev", "watch", "paths"], kind: "stringArray" },
     { path: ["dev", "watch", "debounceMs"], kind: "number" },
     { path: ["dev", "watch", "scriptsEnabledByDefault"], kind: "boolean" },
