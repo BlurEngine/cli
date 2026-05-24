@@ -1,5 +1,13 @@
 # @blurengine/cli
 
+## 0.11.0
+
+### Minor Changes
+
+- [`014023f`](https://github.com/BlurEngine/cli/commit/014023fd3632ce99766bd90c4e53a72cdbdd29ce) Thanks [@SupaHam](https://github.com/SupaHam)! - Add Bebe zone asset baking, draft save handling, and configurable zone editor injection for development and package pipelines.
+
+- [`1b5f636`](https://github.com/BlurEngine/cli/commit/1b5f636ffd41990395369d5bed85968064f0fdb0) Thanks [@SupaHam](https://github.com/SupaHam)! - Add local-server Link support, BDS-aware behavior-pack packaging, and dashboard/API configuration.
+
 ## 0.10.0
 
 ### Minor Changes
