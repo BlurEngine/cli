@@ -20,6 +20,7 @@ my-project/
   src/             # only when scripting is enabled
     main.ts | main.js
   zones.json       # optional, user-created zone definitions
+  render-anchors.json # optional, user-created distant entity visual definitions
   .gitignore
   AGENTS.md
   AGENTS.project.md
@@ -123,6 +124,7 @@ Build note:
 - `blr build` stages canonical output into `dist/stage/`
 - when a runtime entry exists, the bundled runtime still writes to `runtime.outFile` first and is then synced into `dist/stage/behavior_packs/<packName>/scripts/`
 - when `zones.json` exists, `blr` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, then injects a `Zones.load(...)` bootstrap ahead of the authored runtime entry
+- when `render-anchors.json` exists, `blr` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, stages generated behavior/resource pack JSON, then injects a `RenderAnchors.load(...)` and `RenderAnchors.start(...)` bootstrap ahead of the authored runtime entry
 - `blr dev`, `blr build --local-deploy`, and `blr package` all consume the staged output
 - `blr` does not rewrite `behavior_packs/<packName>/scripts/main.js` inside the project by default
 
@@ -170,6 +172,39 @@ Behaviour:
 - bundles a generated bootstrap so `Zones.load(...)` runs before the authored runtime entry
 - `blr dev` watches this file automatically when `watch-scripts` is enabled and reloads the local server after rebaking it
 - during `blr dev --local-server`, Bebe's zone draft save event writes this file through the same project-installed tooling surface and skips the write when the source content is unchanged
+
+### `render-anchors.json`
+
+Optional authored Bebe render-anchor pack.
+
+Purpose:
+
+- stores committed distant entity visual declarations
+- keeps render-distance configuration separate from gameplay source
+- lets Bebe and `blr` generate the carrier entities and always-render client animation contract
+
+Shape:
+
+```json
+{
+  "anchors": [
+    {
+      "id": "harbour.crane",
+      "entity": "demo:crane",
+      "location": [320, 80, -48]
+    }
+  ]
+}
+```
+
+Behaviour:
+
+- omitted by `blr create`; projects add it only when they need distant entity-like visuals
+- requires scripting, a behavior pack, a resource pack, and a project-installed `@blurengine/bebe` version that exposes `@blurengine/bebe/tooling/node`
+- writes the compiled runtime pack to `dist/generated/bebe/render-anchors.json`
+- stages generated behavior/resource pack files without mutating authored Minecraft JSON
+- bundles generated bootstrap so `RenderAnchors.load(...)` and `RenderAnchors.start(...)` run before the authored runtime entry
+- `blr dev` watches this file automatically when `watch-scripts` is enabled and reloads the local server after rebaking it
 
 ### `behavior_packs/<packName>/manifest.json`
 
@@ -356,6 +391,8 @@ The `behavior_packs` variant is used for offline/local Minecraft deployment. The
 When `zones.json` exists, both behavior-pack script variants include
 `scripts/generated/bebe/zones.json`, and both bundled scripts load that baked pack
 through `Zones` before running authored code.
+
+When `render-anchors.json` exists, staged packs include the generated behavior-pack carrier entities, resource-pack client entity variants, and render-anchor animations. Both bundled scripts load `scripts/generated/bebe/render-anchors.json` and start `RenderAnchors` before running authored code.
 
 When a project uses `Link` from `@blurengine/bebe`, direct `Link` calls are stripped from the offline behavior-pack script bundle and kept in the BDS script bundle.
 `blr` injects and owns the BDS Link transport in the BDS bundle, so generated projects should use `Link` without manually installing the transport.

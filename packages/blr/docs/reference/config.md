@@ -382,6 +382,7 @@ Defaults if omitted:
 Notes:
 
 - `watch-scripts` treats runtime source changes as rebuild-and-reload changes
+- project-installed Bebe tooling can add asset source files such as `zones.json` and `render-anchors.json` to the `watch-scripts` surface
 - `.test.*` files do not trigger rebuilds or reloads
 - behavior-pack and resource-pack changes are not watched by default
 - if behavior-pack or resource-pack paths are explicitly added to `dev.watch.paths`, they are rebuilt and resynced without sending `reload` to local-server

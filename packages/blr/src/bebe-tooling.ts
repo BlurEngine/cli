@@ -34,7 +34,14 @@ type BebeToolingDiagnosticSeverity = "ignore" | "warn" | "error";
 
 type BebeAssetCompilerResult = {
     readonly output?: unknown;
+    readonly artifacts?: readonly BebeAssetCompilerArtifact[];
     readonly diagnostics?: readonly BebeToolingDiagnostic[];
+};
+
+type BebeAssetCompilerArtifact = {
+    readonly target: "behaviorPack" | "resourcePack";
+    readonly outputPath: string;
+    readonly output: unknown;
 };
 
 type BebeAssetCompiler = {
@@ -90,6 +97,8 @@ export type BakeBebeAssetsOptions = {
     readonly resolveDiagnosticSeverity?: (
         category: string,
     ) => BebeToolingDiagnosticSeverity | undefined;
+    readonly stageBehaviorPackDirectories: readonly string[];
+    readonly stageResourcePackDirectory?: string;
     readonly stageScriptsDirectories: readonly string[];
 };
 
@@ -118,7 +127,7 @@ export type BebeLinkEventHandlerOptions = {
 
 const BEBE_PACKAGE_NAME = "@blurengine/bebe";
 const BEBE_TOOLING_NODE_SUBPATH = "@blurengine/bebe/tooling/node";
-const KNOWN_BEBE_ASSET_SOURCE_PATHS = ["zones.json"];
+const KNOWN_BEBE_ASSET_SOURCE_PATHS = ["zones.json", "render-anchors.json"];
 const LEGACY_ZONE_OUTPUT_PATHS = [path.posix.join("generated", "zones.json")];
 const DEFAULT_ZONE_DRAFT_SAVE_EVENT = "bebe.zones.saveDraft";
 
@@ -233,6 +242,7 @@ export async function bakeBebeAssets(
         }
 
         await writeJson(outputAbsolutePath, result.output);
+        await syncBebeAssetArtifacts(result.artifacts, options);
         await syncBakedAssetIntoStage(
             outputAbsolutePath,
             outputPath,
@@ -587,6 +597,50 @@ async function syncBakedAssetIntoStage(
         const destination = path.join(scriptsDirectory, outputPath);
         await ensureDirectory(path.dirname(destination));
         await copyFile(sourcePath, destination);
+    }
+}
+
+async function syncBebeAssetArtifacts(
+    artifacts: readonly BebeAssetCompilerArtifact[] | undefined,
+    options: Pick<
+        BakeBebeAssetsOptions,
+        "stageBehaviorPackDirectories" | "stageResourcePackDirectory"
+    >,
+): Promise<void> {
+    for (const artifact of artifacts ?? []) {
+        const outputPath = normalizeAssetRelativePath(
+            artifact.outputPath,
+            "artifact.outputPath",
+        );
+        if (artifact.target === "behaviorPack") {
+            if (options.stageBehaviorPackDirectories.length === 0) {
+                throw new Error(
+                    `Cannot write Bebe behavior-pack artifact ${outputPath} because no staged behavior pack is present.`,
+                );
+            }
+            for (const directory of options.stageBehaviorPackDirectories) {
+                await writeJson(
+                    path.join(directory, outputPath),
+                    artifact.output,
+                );
+            }
+            continue;
+        }
+
+        if (artifact.target === "resourcePack") {
+            if (!options.stageResourcePackDirectory) {
+                throw new Error(
+                    `Cannot write Bebe resource-pack artifact ${outputPath} because no staged resource pack is present.`,
+                );
+            }
+            await writeJson(
+                path.join(options.stageResourcePackDirectory, outputPath),
+                artifact.output,
+            );
+            continue;
+        }
+
+        throw new Error(`Unsupported Bebe artifact target: ${artifact.target}`);
     }
 }
 

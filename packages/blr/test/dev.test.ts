@@ -473,6 +473,15 @@ test("resolveProjectWatchChangeAction reloads source changes, syncs pack changes
             pipelineMode: "reload",
         },
     );
+    assert.deepEqual(
+        resolveProjectWatchChangeAction("render-anchors.json", {
+            assetSourcePaths: ["zones.json", "render-anchors.json"],
+        }),
+        {
+            kind: "reload",
+            pipelineMode: "reload",
+        },
+    );
     assert.deepEqual(resolveProjectWatchChangeAction("scripts/shared.ts"), {
         kind: "ignore",
         message:

@@ -77,7 +77,7 @@ When watch mode is active:
 
 - `blr` prints `[dev] Watching for changes...` once any enabled watcher is ready
 - `watch-scripts` uses the configured project-relative glob-style watch paths
-- `watch-scripts` also watches Bebe asset source files exposed by the project-installed `@blurengine/bebe/tooling/node` compilers, such as `zones.json`
+- `watch-scripts` also watches Bebe asset source files exposed by the project-installed `@blurengine/bebe/tooling/node` compilers, such as `zones.json` and `render-anchors.json`
 - runtime source changes trigger a rebuild and local-server `reload`
 - Bebe asset source changes trigger a rebuild and local-server `reload` so baked JSON and generated bootstrap code stay current during development
 - `.test.*` files do not trigger rebuilds or reloads
@@ -220,7 +220,8 @@ Build output:
 - resource pack source is copied to `dist/stage/resource_packs/<packName>` when the project includes a resource pack
 - when the project has a runtime entry, the offline bundled script is copied into the staged behavior pack `scripts/` directory and the BDS bundled script is copied into the staged BDS behavior pack `scripts/` directory
 - when root `zones.json` exists, `blr build` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, writes the normalised and compiled pack to `dist/generated/bebe/zones.json`, copies it to `scripts/generated/bebe/zones.json` in both staged behavior-pack variants, and injects `Zones.load(...)` before the authored runtime entry
-- `zones.json` requires scripting and a project-installed `@blurengine/bebe` version that exposes `@blurengine/bebe/tooling/node`
+- when root `render-anchors.json` exists, `blr build` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, writes the compiled runtime pack to `dist/generated/bebe/render-anchors.json`, stages generated behavior/resource pack JSON, and injects `RenderAnchors.load(...)` plus `RenderAnchors.start(...)` before the authored runtime entry
+- Bebe asset files such as `zones.json` and `render-anchors.json` require scripting and a project-installed `@blurengine/bebe` version that exposes `@blurengine/bebe/tooling/node`
 - direct `Link` calls imported from `@blurengine/bebe` are stripped from the offline bundle and kept in the BDS bundle
 - `blr` injects and owns the BDS Link transport in the BDS bundle; generated projects should use `Link` without manually installing the transport
 - generated project code should not import Bebe internal transport paths; those are reserved for `blr` bootstrap/runtime wiring

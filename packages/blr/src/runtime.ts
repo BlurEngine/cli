@@ -777,6 +777,11 @@ export async function buildProject(
         projectRoot,
         resolveDiagnosticSeverity: (category) =>
             resolveBebeToolingDiagnosticSeverity(config, pipeline, category),
+        stageBehaviorPackDirectories: [
+            artifacts.stageBehaviorPackDirectory,
+            artifacts.stageBdsBehaviorPackDirectory,
+        ].filter((directory): directory is string => Boolean(directory)),
+        stageResourcePackDirectory: artifacts.stageResourcePackDirectory,
         stageScriptsDirectories: [
             artifacts.stageBehaviorScriptsDirectory,
             artifacts.stageBdsBehaviorScriptsDirectory,

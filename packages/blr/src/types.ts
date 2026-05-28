@@ -296,7 +296,7 @@ export interface BlurConfigBebeFile {
  */
 export interface BlurConfigWatchFile {
     /**
-     * Project-relative watch path patterns. Files under `src/` reload local-server; pack paths resync without reload only when explicitly watched. Project-installed Bebe tooling can add asset source files such as `zones.json` automatically.
+     * Project-relative watch path patterns. Files under `src/` reload local-server; pack paths resync without reload only when explicitly watched. Project-installed Bebe tooling can add asset source files such as `zones.json` or `render-anchors.json` automatically.
      */
     paths?: string[];
     /**
