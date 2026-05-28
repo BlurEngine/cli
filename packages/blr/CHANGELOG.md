@@ -1,5 +1,11 @@
 # @blurengine/cli
 
+## 0.12.0
+
+### Minor Changes
+
+- [`b12c350`](https://github.com/BlurEngine/cli/commit/b12c35072653a3161081cc782cb887adbae13fbf) Thanks [@SupaHam](https://github.com/SupaHam)! - Add Bebe render-anchor asset baking, generated pack artifact staging, and bootstrap injection.
+
 ## 0.11.0
 
 ### Minor Changes
