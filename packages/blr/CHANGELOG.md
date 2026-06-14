@@ -1,5 +1,11 @@
 # @blurengine/cli
 
+## 0.13.0
+
+### Minor Changes
+
+- [`2c6b4fa`](https://github.com/BlurEngine/cli/commit/2c6b4fae659012b0fe7c0c2012e6affb9c05e87b) Thanks [@SupaHam](https://github.com/SupaHam)! - Add Bebe BAUD audio asset support so projects can compile `audio/**/*.baud` through project-installed Bebe tooling and audition loaded or inline BAUD cues through the dev-only audio command, including inline action bar visualisation when supported by Bebe.
+
 ## 0.12.0
 
 ### Minor Changes
