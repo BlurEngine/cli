@@ -84,7 +84,7 @@ test("collectSystemDoctorReport reports a healthy scaffold with warnings instead
             "create",
             "system-project",
             "--namespace",
-            "bc_df",
+            "test_pack",
             "--package-manager",
             "npm",
             "--behavior-pack",

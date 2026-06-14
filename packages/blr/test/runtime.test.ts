@@ -92,7 +92,7 @@ async function createMinimalResourceProject(
     await writeJsonFile(path.join(projectRoot, "blr.config.json"), {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         minecraft: {
             targetVersion: "1.26.11.1",
         },
@@ -130,7 +130,7 @@ async function createMinimalScriptProject(projectRoot: string): Promise<void> {
     await writeJsonFile(path.join(projectRoot, "blr.config.json"), {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         runtime: {
             entry: "src/main.ts",
             outFile: "dist/scripts/main.js",
@@ -150,6 +150,9 @@ async function createInternalBebeLinkBdsStub(
     await mkdir(path.join(packageRoot, "internal", "link"), {
         recursive: true,
     });
+    await mkdir(path.join(packageRoot, "internal", "audio"), {
+        recursive: true,
+    });
     await mkdir(path.join(packageRoot, "internal", "zones"), {
         recursive: true,
     });
@@ -160,6 +163,7 @@ async function createInternalBebeLinkBdsStub(
         exports: {
             ".": "./index.js",
             "./internal/link/bds": "./internal/link/bds.js",
+            "./internal/audio/player": "./internal/audio/player.js",
             "./internal/zones/editor": "./internal/zones/editor.js",
         },
     });
@@ -197,6 +201,17 @@ async function createInternalBebeLinkBdsStub(
         [
             "export function installBdsLinkTransport(options) {",
             "  globalThis.__blrLinkOptions = options;",
+            "}",
+            "",
+        ].join("\n"),
+        "utf8",
+    );
+    await writeFile(
+        path.join(packageRoot, "internal", "audio", "player.js"),
+        [
+            "export function installAudioPlayerCommand(options) {",
+            "  globalThis.__blrAudioPlayerInstalled = (globalThis.__blrAudioPlayerInstalled ?? 0) + 1;",
+            "  globalThis.__blrAudioPlayerOptions = options;",
             "}",
             "",
         ].join("\n"),
@@ -398,10 +413,48 @@ test("buildProject injects the Bebe zone editor for dev builds", async (t) => {
 
     assert.equal(offlineBundle.includes("__blrZoneEditorInstalled"), true);
     assert.equal(bdsBundle.includes("__blrZoneEditorInstalled"), true);
-    assert.match(offlineBundle, /commandNamespace:\s*"bc_df"/);
-    assert.match(bdsBundle, /commandNamespace:\s*"bc_df"/);
+    assert.match(offlineBundle, /commandNamespace:\s*"test_pack"/);
+    assert.match(bdsBundle, /commandNamespace:\s*"test_pack"/);
     assert.match(offlineBundle, /commandPermissionLevel:\s*0/);
     assert.match(bdsBundle, /commandPermissionLevel:\s*0/);
+});
+
+test("buildProject injects the Bebe audio player command for dev builds", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-runtime-audio-dev-");
+    await createMinimalScriptProject(projectRoot);
+    await createInternalBebeLinkBdsStub(projectRoot);
+    await writeJsonFile(path.join(projectRoot, "package.json"), {
+        name: "script-project",
+        private: true,
+        type: "module",
+        dependencies: {
+            "@blurengine/bebe": "0.0.0",
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    await buildProject(projectRoot, config, {
+        production: false,
+        pipeline: "dev",
+    });
+
+    const offlineBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.js"),
+    );
+    const bdsBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.bds.js"),
+    );
+
+    assert.equal(offlineBundle.includes("__blrAudioPlayerInstalled"), true);
+    assert.equal(bdsBundle.includes("__blrAudioPlayerInstalled"), true);
+    assert.match(offlineBundle, /installAudioPlayerCommand/);
+    assert.match(bdsBundle, /installAudioPlayerCommand/);
+    assert.match(offlineBundle, /commandNamespace:\s*"test_pack"/);
+    assert.match(bdsBundle, /commandNamespace:\s*"test_pack"/);
+    assert.match(offlineBundle, /commandPermissionLevel:\s*0/);
+    assert.match(bdsBundle, /commandPermissionLevel:\s*0/);
+    assert.match(offlineBundle, /logger:\s*console/);
+    assert.match(bdsBundle, /logger:\s*console/);
 });
 
 test("buildProject skips the Bebe zone editor when dev injection is disabled", async (t) => {
@@ -445,6 +498,39 @@ test("buildProject skips the Bebe zone editor when dev injection is disabled", a
 
     assert.equal(offlineBundle.includes("__blrZoneEditorInstalled"), false);
     assert.equal(bdsBundle.includes("__blrZoneEditorInstalled"), false);
+});
+
+test("buildProject skips the Bebe audio player command for package builds", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-runtime-audio-package-off-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createInternalBebeLinkBdsStub(projectRoot);
+    await writeJsonFile(path.join(projectRoot, "package.json"), {
+        name: "script-project",
+        private: true,
+        type: "module",
+        dependencies: {
+            "@blurengine/bebe": "0.0.0",
+        },
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    await buildProject(projectRoot, config, {
+        production: false,
+        pipeline: "package",
+    });
+
+    const offlineBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.js"),
+    );
+    const bdsBundle = await readTextFile(
+        path.join(projectRoot, "dist", "scripts", "main.bds.js"),
+    );
+
+    assert.equal(offlineBundle.includes("__blrAudioPlayerInstalled"), false);
+    assert.equal(bdsBundle.includes("__blrAudioPlayerInstalled"), false);
 });
 
 test("buildProject skips the Bebe zone editor for package builds by default", async (t) => {

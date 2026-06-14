@@ -27,7 +27,7 @@ import { resolveMachineSettings } from "../environment.js";
 import { BLR_CONFIG_FILE, BLR_ENV_BDS_VERSION } from "../constants.js";
 import {
     createBebeLinkEventHandler,
-    resolveBebeAssetSourcePaths,
+    resolveBebeAssetWatchConfig,
 } from "../bebe-tooling.js";
 import { LinkServer } from "../link-server.js";
 import {
@@ -276,11 +276,16 @@ function isAssetSourcePath(
     normalizedPath: string,
     assetSourcePaths: readonly string[],
 ): boolean {
-    return assetSourcePaths.some(
-        (sourcePath) =>
-            normalizeWatchPath(sourcePath).replace(/\/+$/, "") ===
-            normalizedPath,
-    );
+    return assetSourcePaths.some((sourcePath) => {
+        const normalizedSourcePath = normalizeWatchPath(sourcePath).replace(
+            /\/+$/,
+            "",
+        );
+        return (
+            normalizedPath === normalizedSourcePath ||
+            normalizedPath.startsWith(`${normalizedSourcePath}/`)
+        );
+    });
 }
 
 function deriveWatchRoot(pattern: string): string {
@@ -307,7 +312,7 @@ function deriveWatchRoot(pattern: string): string {
     return literalSegments.join("/");
 }
 
-function createWatchPlan(patterns: string[]): WatchPlan {
+export function createWatchPlan(patterns: readonly string[]): WatchPlan {
     const normalizedPatterns = patterns.map((pattern) =>
         normalizeWatchPath(pattern),
     );
@@ -2039,9 +2044,10 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     );
     const machineSettings = machine ?? resolveCurrentMachine();
     machine = machineSettings;
-    const bebeAssetSourcePaths = await resolveBebeAssetSourcePaths(projectRoot);
+    const bebeAssetWatchConfig = await resolveBebeAssetWatchConfig(projectRoot);
+    const bebeAssetSourcePaths = bebeAssetWatchConfig.sourcePaths;
     const scriptWatchPatterns = filterScriptWatchPatterns(
-        [...config.dev.watch.paths, ...bebeAssetSourcePaths],
+        [...config.dev.watch.paths, ...bebeAssetWatchConfig.watchPatterns],
         selectedWorld.worldSourcePath,
     );
     const scriptWatchPlan = createWatchPlan(scriptWatchPatterns);
@@ -2056,6 +2062,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         projectRoot,
         selectedWorld,
         bebeAssetSourcePaths,
+        bebeAssetWatchPatterns: bebeAssetWatchConfig.watchPatterns,
         watchPaths: scriptWatchPlan.patterns,
         watchRoots: scriptWatchPlan.roots,
         watchDebounceMs: config.dev.watch.debounceMs,

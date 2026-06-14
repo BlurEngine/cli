@@ -5,6 +5,7 @@ import { build, type Loader, type Plugin } from "esbuild";
 import {
     bakeBebeAssets,
     toProjectImportSpecifier,
+    type BakedBebeAssets,
     type BebePipelineIntent,
 } from "./bebe-tooling.js";
 import {
@@ -68,6 +69,8 @@ type RuntimeBuildEntry = {
 
 const MINECRAFT_COMMAND_PERMISSION_ANY = 0;
 const MINECRAFT_COMMAND_PERMISSION_GAME_DIRECTORS = 1;
+const BEBE_AUDIO_VISUALS_OUTPUT_PATH = "generated/bebe/audio.visuals.json";
+const BEBE_AUDIO_VISUAL_PACK_IDENTIFIER = "__bebeAudioVisualPack";
 
 export type ResolvedBuildArtifacts = {
     distRoot: string;
@@ -177,24 +180,51 @@ function createBebeAssetsRuntimeBuildEntry(
     entryPath: string,
     bootstrapLines: readonly string[],
     installZoneEditor: boolean,
-    zoneEditorCommandNamespace: string,
-    zoneEditorCommandPermissionLevel: number,
+    installAudioPlayerCommand: boolean,
+    audioVisualPackImportSpecifier: string | undefined,
+    commandNamespace: string,
+    commandPermissionLevel: number,
 ): RuntimeBuildEntry {
-    if (!installZoneEditor && bootstrapLines.length === 0) {
+    if (
+        !installZoneEditor &&
+        !installAudioPlayerCommand &&
+        bootstrapLines.length === 0
+    ) {
         return {};
     }
 
     const userEntrySpecifier = toProjectImportSpecifier(projectRoot, entryPath);
     const lines: string[] = [];
+    if (installAudioPlayerCommand) {
+        lines.push(
+            'import { installAudioPlayerCommand } from "@blurengine/bebe/internal/audio/player";',
+        );
+        if (audioVisualPackImportSpecifier) {
+            lines.push(
+                `import ${BEBE_AUDIO_VISUAL_PACK_IDENTIFIER} from ${JSON.stringify(audioVisualPackImportSpecifier)};`,
+            );
+        }
+    }
     if (installZoneEditor) {
         lines.push(
             'import { installZoneEditor } from "@blurengine/bebe/internal/zones/editor";',
         );
     }
     lines.push(...bootstrapLines);
+    if (installAudioPlayerCommand) {
+        lines.push(
+            renderAudioPlayerCommandInstall(
+                commandNamespace,
+                commandPermissionLevel,
+                audioVisualPackImportSpecifier
+                    ? BEBE_AUDIO_VISUAL_PACK_IDENTIFIER
+                    : undefined,
+            ),
+        );
+    }
     if (installZoneEditor) {
         lines.push(
-            `installZoneEditor({ commandNamespace: ${JSON.stringify(zoneEditorCommandNamespace)}, commandPermissionLevel: ${zoneEditorCommandPermissionLevel} });`,
+            `installZoneEditor({ commandNamespace: ${JSON.stringify(commandNamespace)}, commandPermissionLevel: ${commandPermissionLevel} });`,
         );
     }
     lines.push(`void import(${JSON.stringify(userEntrySpecifier)});`, "");
@@ -203,6 +233,24 @@ function createBebeAssetsRuntimeBuildEntry(
         contents: lines.join("\n"),
         sourcefile: "bebe-assets-entry.js",
     };
+}
+
+function renderAudioPlayerCommandInstall(
+    commandNamespace: string,
+    commandPermissionLevel: number,
+    visualPackIdentifier: string | undefined,
+): string {
+    const options = [
+        `commandNamespace: ${JSON.stringify(commandNamespace)}`,
+        `commandPermissionLevel: ${commandPermissionLevel}`,
+        "logger: console",
+    ];
+
+    if (visualPackIdentifier) {
+        options.push(`visualPack: ${visualPackIdentifier}`);
+    }
+
+    return `installAudioPlayerCommand({ ${options.join(", ")} });`;
 }
 
 function resolveDefaultLinkBaseUrl(): string {
@@ -354,8 +402,10 @@ async function createBdsRuntimeBuildEntry(
     options: BuildProjectOptions,
     bootstrapLines: readonly string[],
     installZoneEditor: boolean,
-    zoneEditorCommandNamespace: string,
-    zoneEditorCommandPermissionLevel: number,
+    installAudioPlayerCommand: boolean,
+    audioVisualPackImportSpecifier: string | undefined,
+    commandNamespace: string,
+    commandPermissionLevel: number,
 ): Promise<RuntimeBuildEntry> {
     const installLink =
         options.link?.enabled !== false &&
@@ -363,7 +413,12 @@ async function createBdsRuntimeBuildEntry(
             projectRoot,
             "@blurengine/bebe/internal/link/bds",
         ));
-    if (!installLink && !installZoneEditor && bootstrapLines.length === 0) {
+    if (
+        !installLink &&
+        !installZoneEditor &&
+        !installAudioPlayerCommand &&
+        bootstrapLines.length === 0
+    ) {
         return {};
     }
 
@@ -376,6 +431,16 @@ async function createBdsRuntimeBuildEntry(
             'import { Context } from "@blurengine/bebe";',
             'import { installBdsLinkTransport } from "@blurengine/bebe/internal/link/bds";',
         );
+    }
+    if (installAudioPlayerCommand) {
+        lines.push(
+            'import { installAudioPlayerCommand } from "@blurengine/bebe/internal/audio/player";',
+        );
+        if (audioVisualPackImportSpecifier) {
+            lines.push(
+                `import ${BEBE_AUDIO_VISUAL_PACK_IDENTIFIER} from ${JSON.stringify(audioVisualPackImportSpecifier)};`,
+            );
+        }
     }
     if (installZoneEditor) {
         lines.push(
@@ -396,9 +461,20 @@ async function createBdsRuntimeBuildEntry(
         }
         lines.push(`installBdsLinkTransport({ ${linkOptions.join(", ")} });`);
     }
+    if (installAudioPlayerCommand) {
+        lines.push(
+            renderAudioPlayerCommandInstall(
+                commandNamespace,
+                commandPermissionLevel,
+                audioVisualPackImportSpecifier
+                    ? BEBE_AUDIO_VISUAL_PACK_IDENTIFIER
+                    : undefined,
+            ),
+        );
+    }
     if (installZoneEditor) {
         lines.push(
-            `installZoneEditor({ commandNamespace: ${JSON.stringify(zoneEditorCommandNamespace)}, commandPermissionLevel: ${zoneEditorCommandPermissionLevel} });`,
+            `installZoneEditor({ commandNamespace: ${JSON.stringify(commandNamespace)}, commandPermissionLevel: ${commandPermissionLevel} });`,
         );
     }
     lines.push(`void import(${JSON.stringify(userEntrySpecifier)});`, "");
@@ -571,6 +647,23 @@ export function resolveBuildArtifacts(
             ? path.join(stageRoot, "resource_packs", resourcePackName)
             : undefined,
     };
+}
+
+function resolveBakedBebeAssetImportSpecifier(
+    projectRoot: string,
+    distRoot: string,
+    bakedBebeAssets: BakedBebeAssets,
+    outputPath: string,
+): string | undefined {
+    const absoluteOutputPath = path.resolve(distRoot, outputPath);
+    const output = bakedBebeAssets.outputs.find(
+        (candidate) =>
+            path.resolve(candidate.outputPath) === absoluteOutputPath,
+    );
+
+    return output
+        ? toProjectImportSpecifier(projectRoot, output.outputPath)
+        : undefined;
 }
 
 async function stageProjectContent(
@@ -793,7 +886,21 @@ export async function buildProject(
             projectRoot,
             "@blurengine/bebe/internal/zones/editor",
         ));
-    const zoneEditorCommandPermissionLevel =
+    const installAudioPlayerCommand =
+        pipeline === "dev" &&
+        (await hasResolvableProjectBebeSubpath(
+            projectRoot,
+            "@blurengine/bebe/internal/audio/player",
+        ));
+    const audioVisualPackImportSpecifier = installAudioPlayerCommand
+        ? resolveBakedBebeAssetImportSpecifier(
+              projectRoot,
+              artifacts.distRoot,
+              bakedBebeAssets,
+              BEBE_AUDIO_VISUALS_OUTPUT_PATH,
+          )
+        : undefined;
+    const commandPermissionLevel =
         pipeline === "dev"
             ? MINECRAFT_COMMAND_PERMISSION_ANY
             : MINECRAFT_COMMAND_PERMISSION_GAME_DIRECTORS;
@@ -805,8 +912,10 @@ export async function buildProject(
             entryPath,
             bakedBebeAssets.bootstrapLines,
             installZoneEditor,
+            installAudioPlayerCommand,
+            audioVisualPackImportSpecifier,
             config.namespace,
-            zoneEditorCommandPermissionLevel,
+            commandPermissionLevel,
         );
 
         await build({
@@ -840,8 +949,10 @@ export async function buildProject(
             options,
             bakedBebeAssets.bootstrapLines,
             installZoneEditor,
+            installAudioPlayerCommand,
+            audioVisualPackImportSpecifier,
             config.namespace,
-            zoneEditorCommandPermissionLevel,
+            commandPermissionLevel,
         );
         await build({
             ...(bdsEntry.contents

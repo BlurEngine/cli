@@ -21,6 +21,9 @@ my-project/
     main.ts | main.js
   zones.json       # optional, user-created zone definitions
   render-anchors.json # optional, user-created distant entity visual definitions
+  audio/           # optional, user-created BAUD audio sources
+    cues/
+      reward.baud
   .gitignore
   AGENTS.md
   AGENTS.project.md
@@ -125,6 +128,7 @@ Build note:
 - when a runtime entry exists, the bundled runtime still writes to `runtime.outFile` first and is then synced into `dist/stage/behavior_packs/<packName>/scripts/`
 - when `zones.json` exists, `blr` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, then injects a `Zones.load(...)` bootstrap ahead of the authored runtime entry
 - when `render-anchors.json` exists, `blr` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, stages generated behavior/resource pack JSON, then injects a `RenderAnchors.load(...)` and `RenderAnchors.start(...)` bootstrap ahead of the authored runtime entry
+- when `audio/**/*.baud` exists, `blr` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it into `dist/generated/bebe/audio.json`, copies the pack to staged scripts, and injects `Audio.load(...)` ahead of the authored runtime entry
 - `blr dev`, `blr build --local-deploy`, and `blr package` all consume the staged output
 - `blr` does not rewrite `behavior_packs/<packName>/scripts/main.js` inside the project by default
 
@@ -205,6 +209,38 @@ Behaviour:
 - stages generated behavior/resource pack files without mutating authored Minecraft JSON
 - bundles generated bootstrap so `RenderAnchors.load(...)` and `RenderAnchors.start(...)` run before the authored runtime entry
 - `blr dev` watches this file automatically when `watch-scripts` is enabled and reloads the local server after rebaking it
+
+### `audio/`
+
+Optional authored Bebe BAUD audio source folder.
+
+Purpose:
+
+- stores committed hand-written BAUD audio cues
+- keeps audio source separate from runtime code while still loading through `@blurengine/bebe`
+- lets projects split compact audio cues across nested folders
+
+Example:
+
+```text
+audio/
+  cues/
+    reward.baud
+  areas/
+    meadow.baud
+```
+
+Behaviour:
+
+- omitted by `blr create`; projects add it only when they need authored BAUD audio
+- requires scripting and a project-installed `@blurengine/bebe` version that exposes `@blurengine/bebe/tooling/node`
+- compiles `audio/**/*.baud` into the compact runtime pack at `dist/generated/bebe/audio.json`
+- copies the baked pack to staged script output at `scripts/generated/bebe/audio.json`
+- during `blr dev`, can also write the dev-only visual sidecar at `dist/generated/bebe/audio.visuals.json` and stage it under `scripts/generated/bebe/audio.visuals.json` for the internal audio command
+- bundles generated bootstrap so `Audio.load(...)` runs before the authored runtime entry
+- rejects a root-level `audio.baud`; BAUD project sources must live under `audio/`
+- `blr dev` watches BAUD sources automatically when `watch-scripts` is enabled and reloads the local server after rebaking them
+- when the installed Bebe package supports the internal dev command, `blr dev` injects `/<namespace>:audio list`, `/<namespace>:audio <cueId>`, and `/<namespace>:audio text "<baud>"` for auditioning BAUD cues in-game, with action bar visualisation for command playback when supported by Bebe
 
 ### `behavior_packs/<packName>/manifest.json`
 
@@ -394,6 +430,15 @@ through `Zones` before running authored code.
 
 When `render-anchors.json` exists, staged packs include the generated behavior-pack carrier entities, resource-pack client entity variants, and render-anchor animations. Both bundled scripts load `scripts/generated/bebe/render-anchors.json` and start `RenderAnchors` before running authored code.
 
+When `audio/**/*.baud` exists, both behavior-pack script variants include
+`scripts/generated/bebe/audio.json`, and both bundled scripts load that baked
+pack through `Audio.load(...)` before running authored code.
+
+During `blr dev`, both behavior-pack script variants can also include
+`scripts/generated/bebe/audio.visuals.json` for the internal audio command's
+loaded-cue action bar view. The visual sidecar is source-derived development
+metadata; gameplay bootstrap still uses `audio.json` for playback.
+
 When a project uses `Link` from `@blurengine/bebe`, direct `Link` calls are stripped from the offline behavior-pack script bundle and kept in the BDS script bundle.
 `blr` injects and owns the BDS Link transport in the BDS bundle, so generated projects should use `Link` without manually installing the transport.
 Dynamic Link usage such as assigning or destructuring `Link.event` or `Link.snapshot` fails the offline build with a clear error because `blr` cannot safely erase it.
@@ -403,6 +448,8 @@ During `blr dev --local-server`, the local Link server also exposes the built-in
 The Link bridge assigns fixed-length base64 UUIDv7 event ids for replay and dedupe and exposes them through `event.meta`.
 
 When `bebe.zoneEditor.dev` is `true`, `blr dev` injects the internal Bebe zone editor runtime into script bundles when the project-installed Bebe package supports it. This is enabled by default for development. The editor command uses the project namespace, for example `/<namespace>:zone`. `bebe.zoneEditor.package` defaults to `false`, so packaged output excludes the editor unless the project explicitly opts in.
+
+During `blr dev`, Bebe's internal audio player command is also injected when the installed Bebe package supports it. Use `/<namespace>:audio list` to see loaded BAUD cue ids and `/<namespace>:audio <cueId>` to play one for the command player. Use `/<namespace>:audio text "cue preview t120; @lead note.harp o4 l4 v80; c"` to compile and play one inline BAUD cue, with `;` standing in for BAUD file newlines. Command playback shows an action bar visualisation when supported by Bebe: inline text and loaded cues with `audio.visuals.json` use source-aware `@voice` layers, while loaded cues without the sidecar fall back to the compact compiled view. Packaged output excludes this dev audio command and the visual sidecar.
 
 ### Link Responsibility Boundary
 

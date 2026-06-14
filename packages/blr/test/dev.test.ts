@@ -22,6 +22,27 @@ import {
     writeJsonFile,
 } from "./helpers.js";
 
+type BebeAssetWatchConfig = {
+    readonly sourcePaths: readonly string[];
+    readonly watchPatterns: readonly string[];
+};
+
+type WatchPlan = {
+    readonly patterns: readonly string[];
+    readonly roots: readonly string[];
+    matches(targetPath: string): boolean;
+};
+
+type BebeToolingTestModule = typeof import("../src/bebe-tooling.js") & {
+    resolveBebeAssetWatchConfig?: (
+        projectRoot: string,
+    ) => Promise<BebeAssetWatchConfig>;
+};
+
+type DevWatchTestModule = typeof import("../src/commands/dev.js") & {
+    createWatchPlan?: (patterns: readonly string[]) => WatchPlan;
+};
+
 async function writeConfigFile(
     projectRoot: string,
     config: Record<string, unknown>,
@@ -81,6 +102,60 @@ async function createConfigLoadProject(
     await writeJsonFile(path.join(projectRoot, "blr.config.json"), config);
 }
 
+async function createBebeAssetWatchProject(projectRoot: string): Promise<void> {
+    const packageRoot = path.join(
+        projectRoot,
+        "node_modules",
+        "@blurengine",
+        "bebe",
+    );
+    await mkdir(path.join(packageRoot, "tooling"), { recursive: true });
+    await writeJsonFile(path.join(projectRoot, "package.json"), {
+        name: "watch-project",
+        private: true,
+        type: "module",
+        dependencies: {
+            "@blurengine/bebe": "0.0.0",
+        },
+    });
+    await writeJsonFile(path.join(packageRoot, "package.json"), {
+        name: "@blurengine/bebe",
+        version: "0.0.0",
+        type: "module",
+        exports: {
+            "./tooling/node": "./tooling/node.js",
+        },
+    });
+    await writeFile(
+        path.join(packageRoot, "tooling", "node.js"),
+        [
+            "export function createBebeTooling() {",
+            "  return {",
+            "    assetCompilers: [",
+            "      {",
+            "        id: 'bebe:zones',",
+            "        sourcePaths: ['zones.json'],",
+            "        outputPath: 'generated/bebe/zones.json',",
+            "        compile() { return { output: {} }; },",
+            "      },",
+            "      {",
+            "        id: 'bebe:audio',",
+            "        sourcePaths: ['audio'],",
+            "        sourceKind: 'text',",
+            "        sourceMode: 'collection',",
+            "        sourceFileExtensions: ['.baud'],",
+            "        outputPath: 'generated/bebe/audio.json',",
+            "        compile() { return { output: {} }; },",
+            "      },",
+            "    ],",
+            "  };",
+            "}",
+            "",
+        ].join("\n"),
+        "utf8",
+    );
+}
+
 test("shouldUseInteractiveDevConfiguration is disabled by default", () => {
     assert.equal(shouldUseInteractiveDevConfiguration({}), false);
 });
@@ -101,7 +176,7 @@ test("resolveDevLocalServerVersionSource reports config-file targetVersion when 
     const configPath = await writeConfigFile(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         minecraft: {
             targetVersion: "1.26.0.2",
         },
@@ -123,7 +198,7 @@ test("resolveDevLocalServerVersionSource reports config-env targetVersion when B
     const configPath = await writeConfigFile(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         minecraft: {
             targetVersion: "1.26.0.2",
         },
@@ -145,7 +220,7 @@ test("resolveDevLocalServerVersionSource reports machine-env bdsVersion when BLR
     const configPath = await writeConfigFile(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         minecraft: {
             targetVersion: "1.26.0.2",
         },
@@ -167,7 +242,7 @@ test("resolveDevLocalServerVersionSource reports cli bdsVersion when --bds-versi
     const configPath = await writeConfigFile(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     preserveEnv(t, BLR_ENV_BDS_VERSION);
@@ -188,7 +263,7 @@ test("resolveLocalServerLinkOptions follows local-server selection and config", 
     await createConfigLoadProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         dev: {
             localServer: {
                 link: {
@@ -220,7 +295,7 @@ test("loadBlurConfig defaults local-server worldSync modes to prompt", async (t)
     await createConfigLoadProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const { config } = await loadBlurConfig(projectRoot);
@@ -236,7 +311,7 @@ test("loadBlurConfig respects configured local-server worldSync modes", async (t
     await createConfigLoadProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         dev: {
             localServer: {
                 worldSync: {
@@ -258,7 +333,7 @@ test("resolveRuntimeWorldDecision labels stale runtime worlds when preserve mode
     await createConfigLoadProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         dev: {
             localServer: {
                 worldName,
@@ -329,7 +404,7 @@ test("resolveRuntimeWorldDecision refreshes runtime worlds in replace mode even 
     await createConfigLoadProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         dev: {
             localServer: {
                 worldName,
@@ -482,11 +557,60 @@ test("resolveProjectWatchChangeAction reloads source changes, syncs pack changes
             pipelineMode: "reload",
         },
     );
+    assert.deepEqual(
+        resolveProjectWatchChangeAction("audio/events/reward.baud", {
+            assetSourcePaths: ["audio"],
+        }),
+        {
+            kind: "reload",
+            pipelineMode: "reload",
+        },
+    );
+    assert.deepEqual(
+        resolveProjectWatchChangeAction("zones.json.bak", {
+            assetSourcePaths: ["zones.json"],
+        }),
+        {
+            kind: "ignore",
+            message:
+                "[dev] change ignored: zones.json.bak. Only files under src/ trigger dev reloads.",
+        },
+    );
     assert.deepEqual(resolveProjectWatchChangeAction("scripts/shared.ts"), {
         kind: "ignore",
         message:
             "[dev] change ignored: scripts/shared.ts. Only files under src/ trigger dev reloads.",
     });
+});
+
+test("Bebe collection asset sources expand dev watch coverage for nested files", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-dev-bebe-watch-");
+    await createBebeAssetWatchProject(projectRoot);
+
+    const bebeModule =
+        (await import("../src/bebe-tooling.js")) as BebeToolingTestModule;
+    const resolveBebeAssetWatchConfig = bebeModule.resolveBebeAssetWatchConfig;
+    assert.equal(typeof resolveBebeAssetWatchConfig, "function");
+    const watchConfig = await resolveBebeAssetWatchConfig(projectRoot);
+    assert.deepEqual(watchConfig, {
+        sourcePaths: ["zones.json", "audio"],
+        watchPatterns: ["zones.json", "audio", "audio/**/*.baud"],
+    });
+
+    const devModule =
+        (await import("../src/commands/dev.js")) as DevWatchTestModule;
+    const createWatchPlan = devModule.createWatchPlan;
+    assert.equal(typeof createWatchPlan, "function");
+    const watchPlan = createWatchPlan(watchConfig.watchPatterns);
+    assert.deepEqual(watchPlan.patterns, [
+        "zones.json",
+        "audio",
+        "audio/**/*.baud",
+    ]);
+    assert.deepEqual(watchPlan.roots, ["zones.json", "audio"]);
+    assert.equal(watchPlan.matches("zones.json"), true);
+    assert.equal(watchPlan.matches("audio/events/reward.baud"), true);
+    assert.equal(watchPlan.matches("audio/ignore.txt"), false);
 });
 
 test("mergePipelineModes keeps the strongest queued pipeline mode", () => {
@@ -501,7 +625,7 @@ test("runDevCommand exits immediately when local-server is the only selected act
     await createConfigLoadProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         minecraft: {
             channel: "stable",
             targetVersion: "1.26.12.02",

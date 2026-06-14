@@ -83,7 +83,7 @@ async function createMinimalScriptProject(projectRoot: string): Promise<void> {
     await writeJsonFile(path.join(projectRoot, "blr.config.json"), {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         runtime: {
             entry: "src/main.ts",
             outFile: "dist/scripts/main.js",

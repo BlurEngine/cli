@@ -95,7 +95,7 @@ test("listRemoteWorldsFromS3 lists world zip objects and ignores lock or unrelat
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -151,7 +151,7 @@ test("listRemoteWorldsFromS3 respects projectPrefix namespaces", async (t) => {
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -202,7 +202,7 @@ test("listRemoteWorldVersionsFromS3 lists object versions when bucket versioning
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -288,7 +288,7 @@ test("listRemoteWorldVersionsFromS3 degrades cleanly when a version metadata loo
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -353,7 +353,7 @@ test("listRemoteWorldVersionsFromS3 falls back to the current object metadata fo
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -422,7 +422,7 @@ test("listRemoteWorldVersionsFromS3 fails cleanly when bucket versioning is unav
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -464,7 +464,7 @@ test("listRemoteWorldsFromS3 reports why versioning could not be verified", asyn
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -506,7 +506,7 @@ test("pullWorldFromS3 persists the selected project pin and status keeps the tra
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -610,7 +610,7 @@ test("pullWorldFromS3 downloads a versioned world without requiring a versioned 
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -683,7 +683,7 @@ test("describeWorldStatus reports a useful message when the backend cannot inspe
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -730,7 +730,7 @@ test("describeWorldStatus reports tracked-world fingerprint drift when the proje
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -797,7 +797,7 @@ test("pushWorldToS3 returns the pushed version id and writes the minimal tracked
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -887,7 +887,7 @@ test("pullWorldFromS3 rejects when bucket versioning is unavailable", async (t) 
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -932,7 +932,7 @@ test("pushWorldToS3 rejects when bucket versioning is unavailable", async (t) =>
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -983,7 +983,7 @@ test("pushWorldToS3 rejects when the project does not track a remote world versi
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -1061,7 +1061,7 @@ test("pushWorldToS3 rejects when the tracked project pin does not match the late
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -1148,7 +1148,7 @@ test("runWorldPushCommand prints the pushed version id on success", async (t) =>
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -1231,7 +1231,7 @@ test("runWorldVersionsCommand shows push actor metadata when it is recorded and 
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -1331,7 +1331,7 @@ test("runWorldVersionsCommand skips author output instead of failing when versio
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -1412,7 +1412,7 @@ test("runWorldVersionsCommand shows the latest actor when the backend only retur
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -1502,7 +1502,7 @@ test("runWorldPushCommand fails clearly in non-interactive mode when the remote 
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {
@@ -1579,7 +1579,7 @@ test("runWorldListCommand shows version-unavailable output and prints the versio
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         world: {
             backend: "s3",
             s3: {

@@ -77,7 +77,7 @@ When watch mode is active:
 
 - `blr` prints `[dev] Watching for changes...` once any enabled watcher is ready
 - `watch-scripts` uses the configured project-relative glob-style watch paths
-- `watch-scripts` also watches Bebe asset source files exposed by the project-installed `@blurengine/bebe/tooling/node` compilers, such as `zones.json` and `render-anchors.json`
+- `watch-scripts` also watches Bebe asset source files exposed by the project-installed `@blurengine/bebe/tooling/node` compilers, such as `zones.json`, `render-anchors.json`, and `audio/**/*.baud`
 - runtime source changes trigger a rebuild and local-server `reload`
 - Bebe asset source changes trigger a rebuild and local-server `reload` so baked JSON and generated bootstrap code stay current during development
 - `.test.*` files do not trigger rebuilds or reloads
@@ -118,6 +118,7 @@ When `local-server` is live:
 - when `dev.localServer.link.enabled` is `true`, `blr` also starts the local Link bridge server on `dev.localServer.link.host` and `dev.localServer.link.port`
 - when `dev.localServer.link.dashboard.enabled` is `true`, that Link server URL also serves the built-in dashboard
 - when `bebe.zoneEditor.dev` is `true`, `blr dev` injects the internal Bebe zone editor runtime into script bundles when the project-installed Bebe package exposes it; the editor command uses the project namespace, for example `/<namespace>:zone`
+- when the project-installed Bebe package exposes the internal audio player runtime, `blr dev` injects a development audio command using the project namespace, for example `/<namespace>:audio list`, `/<namespace>:audio reward.success`, and `/<namespace>:audio text "cue preview t120; @lead note.harp o4 l4 v80; c"`; command playback shows an action bar visualisation when supported by Bebe, using source-aware layers for inline text and loaded BAUD cues when the dev visual sidecar is available
 - `Link.event(...)`, `Link.snapshot(...)`, and `Link.on(...)` own their availability checks, so authored code should call them directly; response flows should be handled as separate inbound events with `Link.on(...)`
 - `Link.snapshot(...)` marks an event as latest-retained state, so the local Link server keeps the newest value separately from the default stream log
 - projects own authored Link event names, payloads, and gameplay behavior; Bebe/`blr` own built-in Link smoke behavior such as `bebe.link.ready`, while the dashboard defaults to a generic `project.message` send event
@@ -202,9 +203,9 @@ blr dev --watch-scripts true --local-server false
 blr dev --local-server true --watch-world true
 blr dev --local-server true --watch-allowlist true
 blr dev --local-server true --bds-version 1.26.0.2
-blr dev --local-server true --world "Creative Sandbox"
+blr dev --local-server true --world "<world-name>"
 blr dev --local-server true --compact-scripting-logs false
-blr dev --local-deploy true --minecraft-product Custom --minecraft-development-path D:/com.mojang
+blr dev --local-deploy true --minecraft-product Custom --minecraft-development-path <minecraft-development-path>
 blr dev --debug
 ```
 
@@ -221,7 +222,9 @@ Build output:
 - when the project has a runtime entry, the offline bundled script is copied into the staged behavior pack `scripts/` directory and the BDS bundled script is copied into the staged BDS behavior pack `scripts/` directory
 - when root `zones.json` exists, `blr build` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, writes the normalised and compiled pack to `dist/generated/bebe/zones.json`, copies it to `scripts/generated/bebe/zones.json` in both staged behavior-pack variants, and injects `Zones.load(...)` before the authored runtime entry
 - when root `render-anchors.json` exists, `blr build` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it, writes the compiled runtime pack to `dist/generated/bebe/render-anchors.json`, stages generated behavior/resource pack JSON, and injects `RenderAnchors.load(...)` plus `RenderAnchors.start(...)` before the authored runtime entry
-- Bebe asset files such as `zones.json` and `render-anchors.json` require scripting and a project-installed `@blurengine/bebe` version that exposes `@blurengine/bebe/tooling/node`
+- when `audio/**/*.baud` exists, `blr build` asks the project-installed `@blurengine/bebe/tooling/node` compiler to bake it into `dist/generated/bebe/audio.json`, copies it to `scripts/generated/bebe/audio.json` in both staged behavior-pack variants, and injects `Audio.load(...)` before the authored runtime entry
+- during `blr dev`, the same audio compiler can also emit the dev-only `dist/generated/bebe/audio.visuals.json` script sidecar for the internal audio command; packaged output does not rely on that sidecar
+- Bebe asset sources such as `zones.json`, `render-anchors.json`, and `audio/**/*.baud` require scripting and a project-installed `@blurengine/bebe` version that exposes `@blurengine/bebe/tooling/node`
 - direct `Link` calls imported from `@blurengine/bebe` are stripped from the offline bundle and kept in the BDS bundle
 - `blr` injects and owns the BDS Link transport in the BDS bundle; generated projects should use `Link` without manually installing the transport
 - generated project code should not import Bebe internal transport paths; those are reserved for `blr` bootstrap/runtime wiring
@@ -236,6 +239,7 @@ Bebe integration:
 - supported severities are `ignore`, `warn`, and `error`
 - `bebe.zoneEditor.dev` defaults to `true`, so `blr dev` injects the in-game zone editor runtime when supported by the installed Bebe package; the editor command uses the project namespace, for example `/<namespace>:zone`
 - `bebe.zoneEditor.package` defaults to `false`; set it to `true` only when packaged output should intentionally include the editor runtime
+- `blr dev` also injects Bebe's internal audio player command when the installed Bebe package supports it; packaged output excludes this command. The command can play loaded BAUD cue ids or compile one quoted inline BAUD cue with `/<namespace>:audio text "<baud>"`, using `;` where BAUD files normally use newlines. Command playback shows an action bar visualisation when supported by Bebe: inline text and loaded cues with `audio.visuals.json` use source-aware `@voice` layers, while loaded cues without the sidecar fall back to the compact compiled view.
 
 Flags:
 
@@ -373,7 +377,7 @@ blr package behavior-pack resource-pack
 blr package world
 blr package assets
 blr package world --world-format zip
-blr package --world "Creative Sandbox"
+blr package --world "<world-name>"
 blr package mctemplate --production
 blr package mcworld --debug
 ```
@@ -741,8 +745,8 @@ Behavior:
 
 - requires bucket versioning for the configured S3 backend
 - by default, acquires the remote world lock first
-- downloads `<worldName>.zip` into `.blr/cache/worlds/<bucket>/<worldName>/<encodedVersionId>.zip`
-- extracts it temporarily, copies the result into `worlds/<worldName>/`, and then removes the extracted cache copy
+- writes `<world-name>.zip` to `.blr/cache/worlds/<bucket>/<world-name>/<version-id>.zip`
+- extracts it temporarily, copies the result into `worlds/<world-name>/`, and then removes the extracted cache copy
 - can pull a specific remote object version when bucket versioning is enabled
 - if the remote object is missing, the command fails without reporting success
 - writes or refreshes the project pin in `worlds/worlds.json`
@@ -850,28 +854,28 @@ Flags:
 Examples:
 
 ```text
-blr world use "Creative Sandbox"
+blr world use "<world-name>"
 blr world list
 blr world status
 blr world image
-blr world image --output previews/world-map.png --scale 2
-blr world image "Creative Sandbox" --dimension nether
+blr world image --output <output-path> --scale 2
+blr world image "<world-name>" --dimension nether
 blr world level-dat edit
-blr world level-dat edit --path ./worlds/Bedrock level
-blr world level-dat edit --path C:/Users/example/Downloads/level (1).dat
+blr world level-dat edit --path <world-path>
+blr world level-dat edit --path <level-dat-path>
 blr world level-dat dump
-blr world level-dat dump --path ./worlds/Bedrock level
-blr world level-dat dump --path C:/Users/example/Downloads/level (1).dat
-blr world level-dat dump --format typed --output .tmp/level.dat.json
-blr world level-dat diff ./worlds/Bedrock level ./worlds/Creative Sandbox
-blr world level-dat diff --against ./worlds/Creative Sandbox
-blr world level-dat diff --path ./worlds/Bedrock level --against C:/Users/example/Downloads/level (1).dat
+blr world level-dat dump --path <world-path>
+blr world level-dat dump --path <level-dat-path>
+blr world level-dat dump --format typed --output <output-path>
+blr world level-dat diff <world-path> <other-world-path>
+blr world level-dat diff --against <world-path>
+blr world level-dat diff --path <world-path> --against <level-dat-path>
 blr world versions
 blr world capture
 blr world capture --force true
 blr world pull
 blr world pull --version-id 3Lg7yT5wV5mN6bR6dExample
-blr world pull "Bedrock level" --reason "start editing session"
+blr world pull "<world-name>" --reason "start editing session"
 blr world push --unlock false --reason "save progress and keep lock"
 blr world lock --ttl-seconds 14400 --reason "long editing session"
 blr world unlock

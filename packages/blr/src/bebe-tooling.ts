@@ -1,4 +1,4 @@
-import { copyFile } from "node:fs/promises";
+import { copyFile, readdir, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -39,19 +39,39 @@ type BebeAssetCompilerResult = {
 };
 
 type BebeAssetCompilerArtifact = {
-    readonly target: "behaviorPack" | "resourcePack";
+    readonly target: "behaviorPack" | "resourcePack" | "scripts";
     readonly outputPath: string;
     readonly output: unknown;
+};
+
+type BebeAssetCompilerArtifactOutputPath = {
+    readonly target: BebeAssetCompilerArtifact["target"];
+    readonly outputPath: string;
+};
+
+type BebeAssetSourceKind = "json" | "text";
+type BebeAssetSourceMode = "single" | "collection";
+
+type BebeAssetSourceFile = {
+    readonly relativePath: string;
+    readonly absolutePath: string;
+    readonly text: string;
 };
 
 type BebeAssetCompiler = {
     readonly id: string;
     readonly sourcePaths: readonly string[];
     readonly outputPath: string;
+    readonly sourceKind?: BebeAssetSourceKind;
+    readonly sourceMode?: BebeAssetSourceMode;
+    readonly sourceFileExtensions?: readonly string[];
+    readonly artifactOutputPaths?: readonly BebeAssetCompilerArtifactOutputPath[];
     compile(input: {
         readonly pipeline: BebePipelineIntent;
         readonly projectRoot: string;
-        readonly sourceJson: unknown;
+        readonly sourceJson?: unknown;
+        readonly sourceText?: string;
+        readonly sourceFiles?: readonly BebeAssetSourceFile[];
         readonly sourcePath: string;
         diagnosticSeverity?(
             category: string,
@@ -86,6 +106,11 @@ type BakedBebeAsset = {
 export type BakedBebeAssets = {
     readonly bootstrapLines: readonly string[];
     readonly outputs: readonly BakedBebeAsset[];
+};
+
+export type BebeAssetWatchConfig = {
+    readonly sourcePaths: readonly string[];
+    readonly watchPatterns: readonly string[];
 };
 
 export type BakeBebeAssetsOptions = {
@@ -127,7 +152,17 @@ export type BebeLinkEventHandlerOptions = {
 
 const BEBE_PACKAGE_NAME = "@blurengine/bebe";
 const BEBE_TOOLING_NODE_SUBPATH = "@blurengine/bebe/tooling/node";
-const KNOWN_BEBE_ASSET_SOURCE_PATHS = ["zones.json", "render-anchors.json"];
+const KNOWN_BEBE_ASSET_SOURCE_PATHS = [
+    "zones.json",
+    "render-anchors.json",
+    "audio",
+];
+const DISALLOWED_BEBE_ASSET_SOURCE_PATHS = [
+    {
+        path: "audio.baud",
+        message: "audio.baud is not supported; put BAUD files under audio/.",
+    },
+];
 const LEGACY_ZONE_OUTPUT_PATHS = [path.posix.join("generated", "zones.json")];
 const DEFAULT_ZONE_DRAFT_SAVE_EVENT = "bebe.zones.saveDraft";
 
@@ -147,35 +182,36 @@ export async function resolveBebeAssetSourcePaths(
     const toolingModulePath =
         await resolveProjectBebeToolingModulePath(projectRoot);
     if (!toolingModulePath) {
-        const existingKnownSources: string[] = [];
-        for (const sourcePath of KNOWN_BEBE_ASSET_SOURCE_PATHS) {
-            if (await exists(path.resolve(projectRoot, sourcePath))) {
-                existingKnownSources.push(sourcePath);
-            }
-        }
-
-        return existingKnownSources;
+        return resolveExistingKnownBebeAssetSourcePaths(projectRoot);
     }
 
     const tooling = await loadBebeTooling(toolingModulePath);
-    const sourcePaths = new Set<string>();
-    for (const compiler of tooling.assetCompilers) {
-        for (const sourcePath of compiler.sourcePaths) {
-            sourcePaths.add(
-                normalizeAssetRelativePath(
-                    sourcePath,
-                    `${compiler.id}.sourcePaths`,
-                ),
-            );
-        }
+    return [...resolveBebeAssetWatchConfigFromTooling(tooling).sourcePaths];
+}
+
+export async function resolveBebeAssetWatchConfig(
+    projectRoot: string,
+): Promise<BebeAssetWatchConfig> {
+    const toolingModulePath =
+        await resolveProjectBebeToolingModulePath(projectRoot);
+    if (!toolingModulePath) {
+        const sourcePaths =
+            await resolveExistingKnownBebeAssetSourcePaths(projectRoot);
+        return {
+            sourcePaths,
+            watchPatterns: sourcePaths,
+        };
     }
 
-    return [...sourcePaths];
+    const tooling = await loadBebeTooling(toolingModulePath);
+    return resolveBebeAssetWatchConfigFromTooling(tooling);
 }
 
 export async function bakeBebeAssets(
     options: BakeBebeAssetsOptions,
 ): Promise<BakedBebeAssets> {
+    await assertNoDisallowedBebeAssetSources(options.projectRoot);
+
     const toolingModulePath = await resolveProjectBebeToolingModulePath(
         options.projectRoot,
     );
@@ -188,6 +224,10 @@ export async function bakeBebeAssets(
     }
 
     const tooling = await loadBebeTooling(toolingModulePath);
+    await assertKnownBebeAssetSourcesClaimedByTooling(
+        options.projectRoot,
+        tooling,
+    );
     const bootstrapLines: string[] = [];
     const outputs: BakedBebeAsset[] = [];
 
@@ -195,6 +235,10 @@ export async function bakeBebeAssets(
         const outputPath = normalizeAssetRelativePath(
             compiler.outputPath,
             `${compiler.id}.outputPath`,
+        );
+        const artifactOutputPaths = normalizeArtifactOutputPaths(
+            compiler.artifactOutputPaths ?? [],
+            compiler.id,
         );
         const outputAbsolutePath = path.resolve(options.distRoot, outputPath);
         const source = await findFirstExistingSource(
@@ -208,6 +252,7 @@ export async function bakeBebeAssets(
                 outputPath,
                 options.stageScriptsDirectories,
             );
+            await removeBakedAssetArtifacts(artifactOutputPaths, options);
             continue;
         }
 
@@ -217,11 +262,15 @@ export async function bakeBebeAssets(
             );
         }
 
-        const sourceJson = await readJson<unknown>(source.absolutePath);
+        const sourceInput = await readBebeAssetCompilerSourceInput(
+            compiler,
+            source,
+            options.projectRoot,
+        );
         const result = compileBebeAsset(compiler, {
             pipeline: options.pipeline,
             projectRoot: options.projectRoot,
-            sourceJson,
+            ...sourceInput,
             sourcePath: source.absolutePath,
             diagnosticSeverity: options.resolveDiagnosticSeverity,
         });
@@ -238,11 +287,18 @@ export async function bakeBebeAssets(
                 outputPath,
                 options.stageScriptsDirectories,
             );
+            await removeBakedAssetArtifacts(artifactOutputPaths, options);
             continue;
         }
 
+        await removeBakedAssetArtifacts(artifactOutputPaths, options);
         await writeJson(outputAbsolutePath, result.output);
-        await syncBebeAssetArtifacts(result.artifacts, options);
+        outputs.push(
+            ...(await syncBebeAssetArtifacts(result.artifacts, options, {
+                compilerId: compiler.id,
+                sourcePath: source.absolutePath,
+            })),
+        );
         await syncBakedAssetIntoStage(
             outputAbsolutePath,
             outputPath,
@@ -418,6 +474,39 @@ async function assertNoKnownBebeAssetSourcesWithoutTooling(
     }
 }
 
+async function assertKnownBebeAssetSourcesClaimedByTooling(
+    projectRoot: string,
+    tooling: BebeTooling,
+): Promise<void> {
+    const claimedSourcePaths = new Set(
+        resolveBebeAssetWatchConfigFromTooling(tooling).sourcePaths,
+    );
+    for (const sourcePath of KNOWN_BEBE_ASSET_SOURCE_PATHS) {
+        const normalizedSourcePath = normalizeAssetRelativePath(
+            sourcePath,
+            "known Bebe asset source path",
+        );
+        if (
+            !claimedSourcePaths.has(normalizedSourcePath) &&
+            (await exists(path.resolve(projectRoot, normalizedSourcePath)))
+        ) {
+            throw new Error(
+                `${normalizedSourcePath} requires ${BEBE_TOOLING_NODE_SUBPATH} with an asset compiler that declares ${normalizedSourcePath}. Update @blurengine/bebe so blr can bake Bebe assets through the project-installed tooling surface.`,
+            );
+        }
+    }
+}
+
+async function assertNoDisallowedBebeAssetSources(
+    projectRoot: string,
+): Promise<void> {
+    for (const disallowedSource of DISALLOWED_BEBE_ASSET_SOURCE_PATHS) {
+        if (await exists(path.resolve(projectRoot, disallowedSource.path))) {
+            throw new Error(disallowedSource.message);
+        }
+    }
+}
+
 async function loadBebeTooling(modulePath: string): Promise<BebeTooling> {
     const module = await loadBebeToolingModule(modulePath);
     const tooling = module.createBebeTooling?.();
@@ -463,6 +552,197 @@ async function findFirstExistingSource(
     return undefined;
 }
 
+async function readBebeAssetCompilerSourceInput(
+    compiler: BebeAssetCompiler,
+    source: {
+        readonly absolutePath: string;
+        readonly relativePath: string;
+    },
+    projectRoot: string,
+): Promise<
+    Pick<
+        Parameters<BebeAssetCompiler["compile"]>[0],
+        "sourceFiles" | "sourceJson" | "sourceText"
+    >
+> {
+    const sourceKind = compiler.sourceKind ?? "json";
+    const sourceMode = compiler.sourceMode ?? "single";
+
+    if (sourceMode === "collection") {
+        if (sourceKind === "json") {
+            throw new Error(
+                `JSON source collections are not supported by ${compiler.id}.`,
+            );
+        }
+
+        return {
+            sourceFiles: await collectTextSourceFiles(
+                compiler,
+                source,
+                projectRoot,
+            ),
+        };
+    }
+
+    if (sourceKind === "text") {
+        return {
+            sourceText: await readText(source.absolutePath),
+        };
+    }
+
+    return {
+        sourceJson: await readJson<unknown>(source.absolutePath),
+    };
+}
+
+async function collectTextSourceFiles(
+    compiler: BebeAssetCompiler,
+    source: {
+        readonly absolutePath: string;
+        readonly relativePath: string;
+    },
+    projectRoot: string,
+): Promise<BebeAssetSourceFile[]> {
+    const sourceStats = await stat(source.absolutePath);
+    if (!sourceStats.isDirectory()) {
+        throw new Error(
+            `${source.relativePath} must be a directory for ${compiler.id}.`,
+        );
+    }
+
+    const sourceFileExtensions = new Set(compiler.sourceFileExtensions ?? []);
+    const sourceFiles: BebeAssetSourceFile[] = [];
+    await collectTextSourceFilesFromDirectory(
+        source.absolutePath,
+        projectRoot,
+        sourceFileExtensions,
+        sourceFiles,
+    );
+    sourceFiles.sort((left, right) =>
+        compareCodePointLexically(left.relativePath, right.relativePath),
+    );
+    if (sourceFileExtensions.size > 0 && sourceFiles.length === 0) {
+        throw new Error(
+            `${source.relativePath} must contain at least one ${[
+                ...sourceFileExtensions,
+            ].join(", ")} file for ${compiler.id}.`,
+        );
+    }
+
+    return sourceFiles;
+}
+
+async function resolveExistingKnownBebeAssetSourcePaths(
+    projectRoot: string,
+): Promise<string[]> {
+    const existingKnownSources: string[] = [];
+    for (const sourcePath of KNOWN_BEBE_ASSET_SOURCE_PATHS) {
+        if (await exists(path.resolve(projectRoot, sourcePath))) {
+            existingKnownSources.push(sourcePath);
+        }
+    }
+
+    return existingKnownSources;
+}
+
+function resolveBebeAssetWatchConfigFromTooling(
+    tooling: BebeTooling,
+): BebeAssetWatchConfig {
+    const sourcePaths = new Set<string>();
+    const watchPatterns = new Set<string>();
+    for (const compiler of tooling.assetCompilers) {
+        const sourceMode = compiler.sourceMode ?? "single";
+        for (const sourcePath of compiler.sourcePaths) {
+            const normalizedSourcePath = normalizeAssetRelativePath(
+                sourcePath,
+                `${compiler.id}.sourcePaths`,
+            );
+            sourcePaths.add(normalizedSourcePath);
+            watchPatterns.add(normalizedSourcePath);
+            if (sourceMode === "collection") {
+                for (const pattern of createCollectionWatchPatterns(
+                    normalizedSourcePath,
+                    compiler.sourceFileExtensions ?? [],
+                )) {
+                    watchPatterns.add(pattern);
+                }
+            }
+        }
+    }
+
+    return {
+        sourcePaths: [...sourcePaths],
+        watchPatterns: [...watchPatterns],
+    };
+}
+
+function createCollectionWatchPatterns(
+    sourcePath: string,
+    extensions: readonly string[],
+): string[] {
+    if (extensions.length === 0) {
+        return [`${sourcePath}/**/*`];
+    }
+
+    return extensions.map((extension) => `${sourcePath}/**/*${extension}`);
+}
+
+function compareCodePointLexically(left: string, right: string): number {
+    const leftCodePoints = Array.from(left);
+    const rightCodePoints = Array.from(right);
+    const length = Math.min(leftCodePoints.length, rightCodePoints.length);
+    for (let index = 0; index < length; index += 1) {
+        const difference =
+            leftCodePoints[index].codePointAt(0)! -
+            rightCodePoints[index].codePointAt(0)!;
+        if (difference !== 0) {
+            return difference;
+        }
+    }
+
+    return leftCodePoints.length - rightCodePoints.length;
+}
+
+async function collectTextSourceFilesFromDirectory(
+    directory: string,
+    projectRoot: string,
+    sourceFileExtensions: ReadonlySet<string>,
+    sourceFiles: BebeAssetSourceFile[],
+): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const absolutePath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+            await collectTextSourceFilesFromDirectory(
+                absolutePath,
+                projectRoot,
+                sourceFileExtensions,
+                sourceFiles,
+            );
+            continue;
+        }
+
+        if (!entry.isFile()) {
+            continue;
+        }
+
+        const extension = path.extname(entry.name);
+        if (
+            sourceFileExtensions.size > 0 &&
+            !sourceFileExtensions.has(extension)
+        ) {
+            continue;
+        }
+
+        sourceFiles.push({
+            absolutePath,
+            relativePath: path
+                .relative(projectRoot, absolutePath)
+                .replace(/\\/g, "/"),
+            text: await readText(absolutePath),
+        });
+    }
+}
+
 function normalizeAssetRelativePath(input: string, source: string): string {
     if (typeof input !== "string" || input.trim().length === 0) {
         throw new Error(`${source} must be a project-relative path.`);
@@ -478,6 +758,31 @@ function normalizeAssetRelativePath(input: string, source: string): string {
     }
 
     return normalized;
+}
+
+function normalizeArtifactOutputPaths(
+    artifactOutputPaths: readonly BebeAssetCompilerArtifactOutputPath[],
+    compilerId: string,
+): BebeAssetCompilerArtifactOutputPath[] {
+    return artifactOutputPaths.map((artifact, index) => {
+        if (
+            artifact.target !== "behaviorPack" &&
+            artifact.target !== "resourcePack" &&
+            artifact.target !== "scripts"
+        ) {
+            throw new Error(
+                `${compilerId}.artifactOutputPaths[${index}].target is not supported.`,
+            );
+        }
+
+        return {
+            target: artifact.target,
+            outputPath: normalizeAssetRelativePath(
+                artifact.outputPath,
+                `${compilerId}.artifactOutputPaths[${index}].outputPath`,
+            ),
+        };
+    });
 }
 
 type NormalizedBebeZonePack = {
@@ -604,9 +909,18 @@ async function syncBebeAssetArtifacts(
     artifacts: readonly BebeAssetCompilerArtifact[] | undefined,
     options: Pick<
         BakeBebeAssetsOptions,
-        "stageBehaviorPackDirectories" | "stageResourcePackDirectory"
+        | "distRoot"
+        | "stageBehaviorPackDirectories"
+        | "stageResourcePackDirectory"
+        | "stageScriptsDirectories"
     >,
-): Promise<void> {
+    context: {
+        readonly compilerId: string;
+        readonly sourcePath: string;
+    },
+): Promise<BakedBebeAsset[]> {
+    const outputs: BakedBebeAsset[] = [];
+
     for (const artifact of artifacts ?? []) {
         const outputPath = normalizeAssetRelativePath(
             artifact.outputPath,
@@ -637,6 +951,67 @@ async function syncBebeAssetArtifacts(
                 path.join(options.stageResourcePackDirectory, outputPath),
                 artifact.output,
             );
+            continue;
+        }
+
+        if (artifact.target === "scripts") {
+            const outputAbsolutePath = path.resolve(
+                options.distRoot,
+                outputPath,
+            );
+            await writeJson(outputAbsolutePath, artifact.output);
+            await syncBakedAssetIntoStage(
+                outputAbsolutePath,
+                outputPath,
+                options.stageScriptsDirectories,
+            );
+            outputs.push({
+                compilerId: context.compilerId,
+                outputPath: outputAbsolutePath,
+                sourcePath: context.sourcePath,
+            });
+            continue;
+        }
+
+        throw new Error(`Unsupported Bebe artifact target: ${artifact.target}`);
+    }
+
+    return outputs;
+}
+
+async function removeBakedAssetArtifacts(
+    artifactOutputPaths: readonly BebeAssetCompilerArtifactOutputPath[],
+    options: Pick<
+        BakeBebeAssetsOptions,
+        | "distRoot"
+        | "stageBehaviorPackDirectories"
+        | "stageResourcePackDirectory"
+        | "stageScriptsDirectories"
+    >,
+): Promise<void> {
+    for (const artifact of artifactOutputPaths) {
+        const outputPath = artifact.outputPath;
+        if (artifact.target === "behaviorPack") {
+            for (const directory of options.stageBehaviorPackDirectories) {
+                await removePath(path.join(directory, outputPath));
+            }
+            continue;
+        }
+
+        if (artifact.target === "resourcePack") {
+            if (options.stageResourcePackDirectory) {
+                await removePath(
+                    path.join(options.stageResourcePackDirectory, outputPath),
+                );
+            }
+            continue;
+        }
+
+        if (artifact.target === "scripts") {
+            await removePath(path.resolve(options.distRoot, outputPath));
+            for (const directory of options.stageScriptsDirectories) {
+                await removePath(path.join(directory, outputPath));
+            }
             continue;
         }
 

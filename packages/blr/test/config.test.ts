@@ -54,7 +54,7 @@ test("loadBlurConfig rejects runtime.entry paths that escape the project root", 
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         runtime: {
             entry: "../escape.ts",
         },
@@ -71,7 +71,7 @@ test("loadBlurConfig derives the default worldSourcePath from dev.localServer.wo
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         dev: {
             localServer: {
                 worldName: "Creative Sandbox",
@@ -94,7 +94,7 @@ test("loadBlurConfig enables local-server scripting log compaction by default", 
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const { config } = await loadBlurConfig(projectRoot);
@@ -106,7 +106,7 @@ test("loadBlurConfig respects configured local-server scripting log compaction",
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         dev: {
             localServer: {
                 compactScriptingLogs: false,
@@ -123,7 +123,7 @@ test("loadBlurConfig respects environment overrides for local-server scripting l
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const previousCompactScriptingLogs =
@@ -147,7 +147,7 @@ test("loadBlurConfig defaults local-server Link settings", async (t) => {
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const { config } = await loadBlurConfig(projectRoot);
@@ -166,7 +166,7 @@ test("loadBlurConfig respects configured local-server Link settings", async (t) 
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         dev: {
             localServer: {
                 link: {
@@ -197,7 +197,7 @@ test("loadBlurConfig respects environment overrides for local-server Link settin
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const previousEnabled = process.env.BLR_DEV_LOCALSERVER_LINK_ENABLED;
@@ -249,7 +249,7 @@ test("loadBlurConfig defaults dev.watch.paths to runtime source only", async (t)
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const { config } = await loadBlurConfig(projectRoot);
@@ -261,7 +261,7 @@ test("loadBlurConfig defaults Bebe missing-reference diagnostics by pipeline", a
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const { config } = await loadBlurConfig(projectRoot);
@@ -282,7 +282,7 @@ test("loadBlurConfig respects configured Bebe missing-reference diagnostics", as
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         bebe: {
             diagnostics: {
                 missingReferences: {
@@ -309,7 +309,7 @@ test("loadBlurConfig respects configured Bebe zone editor injection policy", asy
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         bebe: {
             zoneEditor: {
                 dev: false,
@@ -330,7 +330,7 @@ test("loadBlurConfig respects environment overrides for Bebe zone editor injecti
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const previousDev = process.env.BLR_BEBE_ZONEEDITOR_DEV;
@@ -371,7 +371,7 @@ test("loadBlurConfig accepts package.defaultTarget package formats", async (t) =
         await createMinimalProject(projectRoot, {
             schemaVersion: 1,
             projectVersion: 1,
-            namespace: "bc_df",
+            namespace: "test_pack",
             package: {
                 defaultTarget: target,
             },
@@ -387,7 +387,7 @@ test("loadBlurConfig maps the bds behavior package default target alias to behav
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         package: {
             defaultTarget: "bds-behavior-pack",
         },
@@ -402,7 +402,7 @@ test("loadBlurConfig accepts package.defaultTargets package formats", async (t) 
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         package: {
             defaultTargets: ["behavior-pack", "resource-pack"],
         },
@@ -420,7 +420,7 @@ test("loadBlurConfig maps bds behavior package default target aliases to behavio
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         package: {
             defaultTargets: ["bds-behavior-pack", "resource-pack"],
         },
@@ -438,7 +438,7 @@ test("loadBlurConfig accepts package.world.format", async (t) => {
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         package: {
             world: {
                 format: "zip",
@@ -456,7 +456,7 @@ test("loadBlurConfig accepts package.world.layout", async (t) => {
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         package: {
             world: {
                 layout: "com",
@@ -473,7 +473,7 @@ test("loadBlurConfig accepts package.assets.worldImage options", async (t) => {
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         package: {
             assets: {
                 worldImage: {
@@ -500,7 +500,7 @@ test("loadBlurConfig respects environment overrides for package world format", a
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         package: {
             world: {
                 format: "zip",
@@ -527,7 +527,7 @@ test("loadBlurConfig respects environment overrides for package world layout", a
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         package: {
             world: {
                 layout: "bedrock-root",
@@ -554,7 +554,7 @@ test("loadBlurConfig respects environment overrides for package defaultTargets",
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
     });
 
     const previousDefaultTargets = process.env.BLR_PACKAGE_DEFAULTTARGETS;
@@ -579,7 +579,7 @@ test("loadBlurConfig preserves the authored pack minEngineVersion", async (t) =>
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         minecraft: {
             targetVersion: "1.26.11.1",
         },
@@ -595,7 +595,7 @@ test("readConfiguredMinecraftTargetVersion respects environment overrides", asyn
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         minecraft: {
             targetVersion: "1.26.0.2",
         },
@@ -628,7 +628,7 @@ test("loadBlurConfig respects environment overrides for local-server worldSync m
     await createMinimalProject(projectRoot, {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         dev: {
             localServer: {
                 worldSync: {

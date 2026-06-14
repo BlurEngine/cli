@@ -58,7 +58,7 @@ async function createWorldImageProject(projectRoot: string): Promise<void> {
     await writeJsonFile(path.join(projectRoot, "blr.config.json"), {
         schemaVersion: 1,
         projectVersion: 1,
-        namespace: "bc_df",
+        namespace: "test_pack",
         minecraft: {
             targetVersion: "1.26.11.1",
         },
