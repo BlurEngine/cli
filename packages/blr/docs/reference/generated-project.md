@@ -219,6 +219,7 @@ Purpose:
 - stores committed hand-written BAUD audio cues
 - keeps audio source separate from runtime code while still loading through `@blurengine/bebe`
 - lets projects split compact audio cues across nested folders
+- can receive editable BAUD output from `blr audio convert <input.mid>`
 
 Example:
 
@@ -239,8 +240,9 @@ Behaviour:
 - during `blr dev`, can also write the dev-only visual sidecar at `dist/generated/bebe/audio.visuals.json` and stage it under `scripts/generated/bebe/audio.visuals.json` for the internal audio command
 - bundles generated bootstrap so `Audio.load(...)` runs before the authored runtime entry
 - rejects a root-level `audio.baud`; BAUD project sources must live under `audio/`
+- `blr audio convert <input.mid>` can create a `.baud` file under this folder by asking the project-installed Bebe tooling surface to convert Standard MIDI into editable BAUD text; supported General MIDI parts are mapped to curated Bedrock sounds, and unsupported parts are reported when they are dropped
 - `blr dev` watches BAUD sources automatically when `watch-scripts` is enabled and reloads the local server after rebaking them
-- when the installed Bebe package supports the internal dev command, `blr dev` injects `/<namespace>:audio list`, `/<namespace>:audio <cueId>`, and `/<namespace>:audio text "<baud>"` for auditioning BAUD cues in-game, with action bar visualisation for command playback when supported by Bebe
+- when the installed Bebe package supports the internal dev command, `blr dev` injects `/<namespace>:audio`, `/<namespace>:audio list`, `/<namespace>:audio <cueId>`, and `/<namespace>:audio text "<baud>"` for auditioning BAUD cues in-game; the no-argument command opens a cue picker, and command playback uses action bar visualisation when supported by Bebe
 
 ### `behavior_packs/<packName>/manifest.json`
 
@@ -449,7 +451,7 @@ The Link bridge assigns fixed-length base64 UUIDv7 event ids for replay and dedu
 
 When `bebe.zoneEditor.dev` is `true`, `blr dev` injects the internal Bebe zone editor runtime into script bundles when the project-installed Bebe package supports it. This is enabled by default for development. The editor command uses the project namespace, for example `/<namespace>:zone`. `bebe.zoneEditor.package` defaults to `false`, so packaged output excludes the editor unless the project explicitly opts in.
 
-During `blr dev`, Bebe's internal audio player command is also injected when the installed Bebe package supports it. Use `/<namespace>:audio list` to see loaded BAUD cue ids and `/<namespace>:audio <cueId>` to play one for the command player. Use `/<namespace>:audio text "cue preview t120; @lead note.harp o4 l4 v80; c"` to compile and play one inline BAUD cue, with `;` standing in for BAUD file newlines. Command playback shows an action bar visualisation when supported by Bebe: inline text and loaded cues with `audio.visuals.json` use source-aware `@voice` layers, while loaded cues without the sidecar fall back to the compact compiled view. Packaged output excludes this dev audio command and the visual sidecar.
+During `blr dev`, Bebe's internal audio player command is also injected when the installed Bebe package supports it. Use `/<namespace>:audio` to open a picker for loaded BAUD cue ids, `/<namespace>:audio list` to print them, and `/<namespace>:audio <cueId>` to play one for the command player. Use `/<namespace>:audio text "cue preview t120; @lead note.harp o4 l4 v80; c"` to compile and play one inline BAUD cue, with `;` standing in for BAUD file newlines. If the command player already has command-started audio playing, the picker shows `Clear`, and starting another command cue replaces that player's previous command playback. This is dev-command behavior only; runtime `Audio.play(...)` calls can still overlap. Command playback shows an action bar visualisation when supported by Bebe: inline text and loaded cues with `audio.visuals.json` use source-aware `@voice` layers, while loaded cues without the sidecar fall back to the compact compiled view. Packaged output excludes this dev audio command and the visual sidecar.
 
 ### Link Responsibility Boundary
 

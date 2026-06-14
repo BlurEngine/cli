@@ -357,7 +357,7 @@ Notes:
 
 - the zone editor injection is only available when the project-installed `@blurengine/bebe` exposes the internal editor runtime used by `blr`
 - `blr dev` includes the editor by default so creators can use in-game tooling during development; the editor command uses the project namespace, for example `/<namespace>:zone`
-- `blr dev` injects Bebe's internal audio player command when the project-installed `@blurengine/bebe` exposes it; the command uses the project namespace, for example `/<namespace>:audio reward.success` or `/<namespace>:audio text "cue preview t120; @lead note.harp o4 l4 v80; c"`. Command playback shows an action bar visualisation when supported by Bebe, using the dev `audio.visuals.json` sidecar for source-aware loaded-cue layers when that sidecar is available.
+- `blr dev` injects Bebe's internal audio player command when the project-installed `@blurengine/bebe` exposes it; the command uses the project namespace, for example `/<namespace>:audio`, `/<namespace>:audio reward.success`, or `/<namespace>:audio text "cue preview t120; @lead note.harp o4 l4 v80; c"`. The no-argument command opens a cue picker, and command-started playback can be cleared or replaced per player without changing production `Audio.play(...)` overlap behavior. Command playback shows an action bar visualisation when supported by Bebe, using the dev `audio.visuals.json` sidecar for source-aware loaded-cue layers when that sidecar is available.
 - `blr package` excludes the editor by default so distributable packs do not accidentally ship editing tools
 - setting `bebe.zoneEditor.package` to `true` intentionally packages the editor runtime
 

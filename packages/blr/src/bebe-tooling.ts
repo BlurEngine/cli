@@ -89,6 +89,14 @@ type BebeTooling = {
 
 type BebeToolingModule = {
     createBebeTooling?: () => BebeTooling;
+    convertMidiToBaud?: (
+        data: Uint8Array,
+        options: BebeMidiToBaudOptions,
+    ) => string;
+    convertMidiToBaudWithDiagnostics?: (
+        data: Uint8Array,
+        options: BebeMidiToBaudOptions,
+    ) => unknown | Promise<unknown>;
     normalizeZonePack?: (
         input: unknown,
         options?: { readonly source?: string },
@@ -131,6 +139,61 @@ export type SaveBebeZoneDraftResult = {
     readonly changed: boolean;
     readonly sourcePath: string;
     readonly zoneCount: number;
+};
+
+export type BebeMidiToBaudLayerId = "right" | "inner" | "left";
+
+export type BebeMidiToBaudProfile = "compact" | "minecraft" | "raw";
+
+export type BebeMidiToBaudPolicyOptions = {
+    readonly lowBassMinimumPitch?: number;
+    readonly lowBassMinimumTickGap?: number;
+    readonly maxSimultaneousNotes?: number;
+    readonly maxWeightedPressure?: number;
+};
+
+export type BebeMidiToBaudOptions = {
+    readonly cueId: string;
+    readonly lineLength?: number;
+    readonly policy?: BebeMidiToBaudPolicyOptions;
+    readonly profile?: BebeMidiToBaudProfile;
+    readonly soundId?: string | Partial<Record<BebeMidiToBaudLayerId, string>>;
+    readonly tempo?: number;
+    readonly volumes?: Partial<Record<BebeMidiToBaudLayerId, number>>;
+};
+
+export type BebeMidiToBaudDiagnostic =
+    | {
+          readonly kind: "mappedPart";
+          readonly midiChannel: number;
+          readonly noteCount: number;
+          readonly program?: number;
+          readonly programName?: string;
+          readonly soundId: string;
+          readonly voiceId: string;
+      }
+    | {
+          readonly kind: "droppedPart";
+          readonly midiChannel: number;
+          readonly noteCount: number;
+          readonly program?: number;
+          readonly programName?: string;
+          readonly reason: "unsupportedProgram" | "unsupportedPercussion";
+      }
+    | {
+          readonly kind: "optimizedPlayback";
+          readonly noteCount: number;
+          readonly profile: BebeMidiToBaudProfile;
+          readonly reason:
+              | "duplicateNote"
+              | "lowBassDensity"
+              | "pressureBudget"
+              | "simultaneousBudget";
+      };
+
+export type BebeMidiToBaudConversion = {
+    readonly baud: string;
+    readonly diagnostics: readonly BebeMidiToBaudDiagnostic[];
 };
 
 export type BebeLinkEventHandlerInput = {
@@ -336,6 +399,81 @@ export async function bakeBebeAssets(
     return {
         bootstrapLines,
         outputs,
+    };
+}
+
+export async function convertProjectMidiToBaud(
+    projectRoot: string,
+    data: Uint8Array,
+    options: BebeMidiToBaudOptions,
+): Promise<string> {
+    return (
+        await convertProjectMidiToBaudWithDiagnostics(
+            projectRoot,
+            data,
+            options,
+        )
+    ).baud;
+}
+
+export async function convertProjectMidiToBaudWithDiagnostics(
+    projectRoot: string,
+    data: Uint8Array,
+    options: BebeMidiToBaudOptions,
+): Promise<BebeMidiToBaudConversion> {
+    const toolingModulePath =
+        await resolveProjectBebeToolingModulePath(projectRoot);
+    if (!toolingModulePath) {
+        throw new Error(
+            `MIDI conversion requires ${BEBE_TOOLING_NODE_SUBPATH}. Update @blurengine/bebe so blr can convert MIDI through the project-installed tooling surface.`,
+        );
+    }
+
+    const module = await loadBebeToolingModule(toolingModulePath);
+    if (typeof module.convertMidiToBaudWithDiagnostics === "function") {
+        return normalizeMidiToBaudConversion(
+            await module.convertMidiToBaudWithDiagnostics(data, options),
+        );
+    }
+
+    if (typeof module.convertMidiToBaud !== "function") {
+        throw new Error(
+            `${BEBE_TOOLING_NODE_SUBPATH} must export convertMidiToBaud() for audio MIDI conversion.`,
+        );
+    }
+
+    return {
+        baud: module.convertMidiToBaud(data, options),
+        diagnostics: [],
+    };
+}
+
+function normalizeMidiToBaudConversion(
+    input: unknown,
+): BebeMidiToBaudConversion {
+    if (!input || typeof input !== "object") {
+        throw new Error(
+            `${BEBE_TOOLING_NODE_SUBPATH} returned an invalid MIDI conversion result.`,
+        );
+    }
+
+    const conversion = input as {
+        readonly baud?: unknown;
+        readonly diagnostics?: unknown;
+    };
+    if (
+        typeof conversion.baud !== "string" ||
+        !Array.isArray(conversion.diagnostics)
+    ) {
+        throw new Error(
+            `${BEBE_TOOLING_NODE_SUBPATH} returned an invalid MIDI conversion result.`,
+        );
+    }
+
+    return {
+        baud: conversion.baud,
+        diagnostics:
+            conversion.diagnostics as readonly BebeMidiToBaudDiagnostic[],
     };
 }
 

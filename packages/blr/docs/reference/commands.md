@@ -118,7 +118,7 @@ When `local-server` is live:
 - when `dev.localServer.link.enabled` is `true`, `blr` also starts the local Link bridge server on `dev.localServer.link.host` and `dev.localServer.link.port`
 - when `dev.localServer.link.dashboard.enabled` is `true`, that Link server URL also serves the built-in dashboard
 - when `bebe.zoneEditor.dev` is `true`, `blr dev` injects the internal Bebe zone editor runtime into script bundles when the project-installed Bebe package exposes it; the editor command uses the project namespace, for example `/<namespace>:zone`
-- when the project-installed Bebe package exposes the internal audio player runtime, `blr dev` injects a development audio command using the project namespace, for example `/<namespace>:audio list`, `/<namespace>:audio reward.success`, and `/<namespace>:audio text "cue preview t120; @lead note.harp o4 l4 v80; c"`; command playback shows an action bar visualisation when supported by Bebe, using source-aware layers for inline text and loaded BAUD cues when the dev visual sidecar is available
+- when the project-installed Bebe package exposes the internal audio player runtime, `blr dev` injects a development audio command using the project namespace, for example `/<namespace>:audio`, `/<namespace>:audio list`, `/<namespace>:audio reward.success`, and `/<namespace>:audio text "cue preview t120; @lead note.harp o4 l4 v80; c"`; the no-argument command opens a cue picker, command-started playback can be cleared or replaced per player, and command playback shows an action bar visualisation when supported by Bebe, using source-aware layers for inline text and loaded BAUD cues when the dev visual sidecar is available
 - `Link.event(...)`, `Link.snapshot(...)`, and `Link.on(...)` own their availability checks, so authored code should call them directly; response flows should be handled as separate inbound events with `Link.on(...)`
 - `Link.snapshot(...)` marks an event as latest-retained state, so the local Link server keeps the newest value separately from the default stream log
 - projects own authored Link event names, payloads, and gameplay behavior; Bebe/`blr` own built-in Link smoke behavior such as `bebe.link.ready`, while the dashboard defaults to a generic `project.message` send event
@@ -239,7 +239,7 @@ Bebe integration:
 - supported severities are `ignore`, `warn`, and `error`
 - `bebe.zoneEditor.dev` defaults to `true`, so `blr dev` injects the in-game zone editor runtime when supported by the installed Bebe package; the editor command uses the project namespace, for example `/<namespace>:zone`
 - `bebe.zoneEditor.package` defaults to `false`; set it to `true` only when packaged output should intentionally include the editor runtime
-- `blr dev` also injects Bebe's internal audio player command when the installed Bebe package supports it; packaged output excludes this command. The command can play loaded BAUD cue ids or compile one quoted inline BAUD cue with `/<namespace>:audio text "<baud>"`, using `;` where BAUD files normally use newlines. Command playback shows an action bar visualisation when supported by Bebe: inline text and loaded cues with `audio.visuals.json` use source-aware `@voice` layers, while loaded cues without the sidecar fall back to the compact compiled view.
+- `blr dev` also injects Bebe's internal audio player command when the installed Bebe package supports it; packaged output excludes this command. The command can open a picker with `/<namespace>:audio`, play loaded BAUD cue ids, or compile one quoted inline BAUD cue with `/<namespace>:audio text "<baud>"`, using `;` where BAUD files normally use newlines. If the command player already has command-started audio playing, the picker shows `Clear`, and starting another command cue replaces that player's previous command playback without changing production `Audio.play(...)` overlap behavior. Command playback shows an action bar visualisation when supported by Bebe: inline text and loaded cues with `audio.visuals.json` use source-aware `@voice` layers, while loaded cues without the sidecar fall back to the compact compiled view.
 
 Flags:
 
@@ -258,6 +258,58 @@ blr build
 blr build --production
 blr build --local-deploy true --minecraft-product BedrockUWP
 blr build --debug
+```
+
+## `blr audio`
+
+Manages project BAUD audio sources.
+
+### `blr audio convert`
+
+Converts a Standard MIDI file into an editable BAUD source file.
+
+Syntax:
+
+```text
+blr audio convert <input>
+```
+
+Behavior:
+
+- loads the current project and resolves the project-installed `@blurengine/bebe/tooling/node`
+- reads a `.mid` or `.midi` file from the command working directory
+- asks Bebe's MIDI converter to emit BAUD text
+- maps supported General MIDI program/channel parts to curated Bedrock sounds when that data is present
+- folds MIDI note velocity, channel volume, and expression into generated BAUD voice volumes
+- applies MIDI sustain pedal events before quantising note durations
+- uses Bebe's default Minecraft-safe MIDI playback profile to collapse duplicate starts, thin dense low bass, and budget unsafe same-tick stacks
+- warns about unsupported MIDI parts that were dropped instead of guessing a poor substitute
+- warns when source features such as per-note dynamics, tempo-map changes, pan, pitch bend, track names, or later time-signature changes are approximated or ignored by BAUD import
+- writes the result under `audio/`; output outside `audio/` is rejected
+- defaults the cue id to the input filename stem
+- defaults the output path to `audio/<cue-id>.baud`
+- treats MIDI as an import source only; the checked-in project source remains editable BAUD
+
+Flags:
+
+- `--cue <cueId>`: override the generated BAUD cue id
+- `--out <path>`: write to a project-relative `.baud` path under `audio/`
+- `--sound <soundId>`: use a Minecraft sound id for generated melodic BAUD layers, including melodic parts that would otherwise be unsupported
+- `--profile <profile>`: choose `minecraft`, `compact`, or `raw` MIDI playback conversion; defaults to Bebe's `minecraft` profile
+- `--max-simultaneous <count>`: override maximum same-tick note starts during MIDI conversion
+- `--max-pressure <weight>`: override the same-tick weighted sound-pressure budget during MIDI conversion
+- `--low-bass-pitch <midiKey>`: override the MIDI key below which bass is treated as dense low bass
+- `--low-bass-gap <ticks>`: override the minimum tick gap for dense low-bass starts
+- `--tempo <bpm>`: override the output BAUD tempo
+
+Examples:
+
+```text
+blr audio convert <input.mid>
+blr audio convert <input.mid> --cue boss.theme
+blr audio convert <input.mid> --cue boss.theme --out audio/boss/theme.baud --sound note.harp --tempo 140
+blr audio convert <input.mid> --profile raw
+blr audio convert <input.mid> --profile compact --max-simultaneous 6 --max-pressure 5.5
 ```
 
 ## `blr package`

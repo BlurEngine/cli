@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { runAudioConvertCommand } from "../src/commands/audio.js";
 import { loadBlurConfig } from "../src/config.js";
 import { buildProject } from "../src/runtime.js";
 import {
@@ -173,6 +174,44 @@ async function createBebeAudioStub(projectRoot: string): Promise<void> {
             "  };",
             "}",
             "",
+            "export function convertMidiToBaud(data, options) {",
+            "  const soundId = typeof options.soundId === 'string' ? options.soundId : 'note.harp';",
+            "  const policyLine = options.profile || options.policy ? `# ${JSON.stringify({ profile: options.profile, policy: options.policy })}` : undefined;",
+            "  return [",
+            "    `cue ${options.cueId} t${options.tempo ?? 120}`,",
+            "    `@right ${soundId} o5 l8 v88`,",
+            "    `c`,",
+            "    ...(policyLine ? [policyLine] : []),",
+            "    '',",
+            "  ].join('\\n');",
+            "}",
+            "",
+            "export function convertMidiToBaudWithDiagnostics(data, options) {",
+            "  const diagnostics = [];",
+            "  if (options.cueId === 'with.drop') {",
+            "    diagnostics.push({",
+            "      kind: 'droppedPart',",
+            "      midiChannel: 6,",
+            "      noteCount: 12,",
+            "      program: 53,",
+            "      programName: 'Choir Aahs',",
+            "      reason: 'unsupportedProgram',",
+            "    });",
+            "  }",
+            "  if (options.cueId === 'with.optimize') {",
+            "    diagnostics.push({",
+            "      kind: 'optimizedPlayback',",
+            "      noteCount: 4,",
+            "      profile: 'minecraft',",
+            "      reason: 'duplicateNote',",
+            "    });",
+            "  }",
+            "  return {",
+            "    baud: convertMidiToBaud(data, options),",
+            "    diagnostics,",
+            "  };",
+            "}",
+            "",
         ].join("\n"),
         "utf8",
     );
@@ -214,6 +253,239 @@ async function createStaleBebeToolingStub(projectRoot: string): Promise<void> {
         "utf8",
     );
 }
+
+test("audio convert writes MIDI-derived BAUD through project-installed Bebe tooling", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-audio-convert-");
+    await createMinimalScriptProject(projectRoot);
+    await createBebeAudioStub(projectRoot);
+    await writeFile(
+        path.join(projectRoot, "source.mid"),
+        Uint8Array.of(0x4d, 0x54, 0x68, 0x64),
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+        await runAudioConvertCommand("source.mid", {
+            cue: "boss.theme",
+            out: "audio/boss.theme.baud",
+            sound: "note.pling",
+            tempo: 180,
+        });
+    } finally {
+        process.chdir(originalCwd);
+    }
+
+    assert.equal(
+        await readTextFile(path.join(projectRoot, "audio", "boss.theme.baud")),
+        "cue boss.theme t180\n@right note.pling o5 l8 v88\nc\n",
+    );
+});
+
+test("audio convert passes MIDI playback profile and policy overrides", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-audio-convert-profile-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createBebeAudioStub(projectRoot);
+    await writeFile(
+        path.join(projectRoot, "source.mid"),
+        Uint8Array.of(0x4d, 0x54, 0x68, 0x64),
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+        await runAudioConvertCommand("source.mid", {
+            cue: "profile.test",
+            lowBassGap: 6,
+            lowBassPitch: 38,
+            maxPressure: 5.5,
+            maxSimultaneous: 6,
+            profile: "compact",
+        });
+    } finally {
+        process.chdir(originalCwd);
+    }
+
+    assert.equal(
+        await readTextFile(
+            path.join(projectRoot, "audio", "profile.test.baud"),
+        ),
+        [
+            "cue profile.test t120",
+            "@right note.harp o5 l8 v88",
+            "c",
+            '# {"profile":"compact","policy":{"lowBassMinimumPitch":38,"lowBassMinimumTickGap":6,"maxSimultaneousNotes":6,"maxWeightedPressure":5.5}}',
+            "",
+        ].join("\n"),
+    );
+});
+
+test("audio convert reports dropped unsupported MIDI parts", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-audio-convert-dropped-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createBebeAudioStub(projectRoot);
+    await writeFile(
+        path.join(projectRoot, "source.mid"),
+        Uint8Array.of(0x4d, 0x54, 0x68, 0x64),
+    );
+
+    const warnings: string[] = [];
+    const originalCwd = process.cwd();
+    const originalWarn = console.warn;
+    process.chdir(projectRoot);
+    console.warn = (message?: unknown): void => {
+        warnings.push(String(message));
+    };
+    try {
+        await runAudioConvertCommand("source.mid", {
+            cue: "with.drop",
+        });
+    } finally {
+        console.warn = originalWarn;
+        process.chdir(originalCwd);
+    }
+
+    assert.deepEqual(warnings, [
+        "[audio] Dropped unsupported MIDI parts:",
+        "[audio]   ch6 Choir Aahs: 12 notes",
+    ]);
+});
+
+test("audio convert reports optimized MIDI playback reductions", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-audio-convert-optimized-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createBebeAudioStub(projectRoot);
+    await writeFile(
+        path.join(projectRoot, "source.mid"),
+        Uint8Array.of(0x4d, 0x54, 0x68, 0x64),
+    );
+
+    const logs: string[] = [];
+    const originalCwd = process.cwd();
+    const originalLog = console.log;
+    process.chdir(projectRoot);
+    console.log = (message?: unknown): void => {
+        logs.push(String(message));
+    };
+    try {
+        await runAudioConvertCommand("source.mid", {
+            cue: "with.optimize",
+        });
+    } finally {
+        console.log = originalLog;
+        process.chdir(originalCwd);
+    }
+
+    assert.deepEqual(logs.slice(1), [
+        "[audio] Optimized MIDI playback:",
+        "[audio]   minecraft duplicate-note: 4 notes",
+    ]);
+});
+
+test("audio convert keeps output inside the project audio directory", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-audio-convert-outside-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createBebeAudioStub(projectRoot);
+    await writeFile(
+        path.join(projectRoot, "source.mid"),
+        Uint8Array.of(0x4d, 0x54, 0x68, 0x64),
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+        await assert.rejects(
+            () =>
+                runAudioConvertCommand("source.mid", {
+                    out: "generated/source.baud",
+                }),
+            /audio convert output must be under audio\//,
+        );
+    } finally {
+        process.chdir(originalCwd);
+    }
+});
+
+test("audio convert rejects unsupported input file extensions", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-audio-convert-extension-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createBebeAudioStub(projectRoot);
+    await writeFile(path.join(projectRoot, "source.txt"), "not midi", "utf8");
+
+    const originalCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+        await assert.rejects(
+            () => runAudioConvertCommand("source.txt", {}),
+            /audio convert input must use the \.mid or \.midi extension/,
+        );
+    } finally {
+        process.chdir(originalCwd);
+    }
+});
+
+test("audio convert rejects non-positive tempo values", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-audio-convert-tempo-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createBebeAudioStub(projectRoot);
+    await writeFile(
+        path.join(projectRoot, "source.mid"),
+        Uint8Array.of(0x4d, 0x54, 0x68, 0x64),
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+        await assert.rejects(
+            () => runAudioConvertCommand("source.mid", { tempo: 0 }),
+            /audio convert tempo must be a positive integer/,
+        );
+    } finally {
+        process.chdir(originalCwd);
+    }
+});
+
+test("audio convert requires Bebe tooling with MIDI conversion support", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-audio-convert-stale-",
+    );
+    await createMinimalScriptProject(projectRoot);
+    await createStaleBebeToolingStub(projectRoot);
+    await writeFile(
+        path.join(projectRoot, "source.mid"),
+        Uint8Array.of(0x4d, 0x54, 0x68, 0x64),
+    );
+
+    const originalCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+        await assert.rejects(
+            () => runAudioConvertCommand("source.mid", {}),
+            /@blurengine\/bebe\/tooling\/node must export convertMidiToBaud\(\) for audio MIDI conversion/,
+        );
+    } finally {
+        process.chdir(originalCwd);
+    }
+});
 
 test("audio BAUD files are collected, baked, staged, and loaded before runtime", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-audio-build-");

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command, InvalidOptionArgumentError } from "commander";
+import { runAudioConvertCommand } from "./commands/audio.js";
 import { runBuildCommand } from "./commands/build.js";
 import { runCleanCommand } from "./commands/clean.js";
 import { runCreateCommand } from "./commands/create.js";
@@ -78,6 +79,28 @@ function parseLevelDatDiffFormat(value: string): "text" | "json" {
     throw new InvalidOptionArgumentError(
         `Expected level.dat diff format to be "text" or "json", received "${value}".`,
     );
+}
+
+function parsePositiveInteger(value: string): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new InvalidOptionArgumentError(
+            `Expected a positive integer, received "${value}".`,
+        );
+    }
+
+    return parsed;
+}
+
+function parsePositiveNumber(value: string): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new InvalidOptionArgumentError(
+            `Expected a positive number, received "${value}".`,
+        );
+    }
+
+    return parsed;
 }
 
 async function main(): Promise<void> {
@@ -337,6 +360,56 @@ async function main(): Promise<void> {
         .description(
             "Manage project Minecraft target-version convenience workflows.",
         );
+
+    const audio = program
+        .command("audio")
+        .description("Manage project BAUD audio sources.");
+
+    audio
+        .command("convert")
+        .description("Convert a MIDI file into a BAUD source file.")
+        .argument("<input>", "Path to a .mid or .midi file")
+        .option("--cue <cueId>", "BAUD cue id. Defaults to the input filename.")
+        .option(
+            "--out <path>",
+            "Project-relative .baud output path under audio/.",
+        )
+        .option(
+            "--sound <soundId>",
+            "Minecraft sound id override for generated melodic BAUD layers.",
+        )
+        .option(
+            "--profile <profile>",
+            "MIDI playback profile: minecraft, compact, or raw.",
+        )
+        .option(
+            "--max-simultaneous <count>",
+            "Override maximum same-tick note starts for MIDI conversion.",
+            parsePositiveNumber,
+        )
+        .option(
+            "--max-pressure <weight>",
+            "Override same-tick weighted pressure budget for MIDI conversion.",
+            parsePositiveNumber,
+        )
+        .option(
+            "--low-bass-pitch <midiKey>",
+            "Override the MIDI key below which bass is treated as dense low bass.",
+            parsePositiveInteger,
+        )
+        .option(
+            "--low-bass-gap <ticks>",
+            "Override minimum tick gap for dense low-bass MIDI starts.",
+            parsePositiveNumber,
+        )
+        .option(
+            "--tempo <bpm>",
+            "Override output BAUD tempo.",
+            parsePositiveInteger,
+        )
+        .action(async (input: string, opts: Record<string, unknown>) => {
+            await runAudioConvertCommand(input, opts as any);
+        });
 
     const system = program
         .command("system")
