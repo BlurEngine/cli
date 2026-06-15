@@ -61,7 +61,7 @@
     "adm-zip": "^0.5.17",
     "chokidar": "^5.0.0",
     "commander": "^14.0.3",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "kleur": "^4.1.5",
     "mcbe-leveldb": "^1.15.0",
     "node-pty": "^1.1.0",
