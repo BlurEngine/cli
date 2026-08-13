@@ -120,6 +120,9 @@ export type TestSubchunkBlock = {
     localY: number;
     localZ: number;
     dimension?: BedrockDimension;
+    states?: Record<string, boolean | number | string>;
+    version?: number;
+    layer?: number;
 };
 
 export async function createBedrockTerrainDb(
@@ -146,60 +149,25 @@ export async function createBedrockTerrainDb(
 
         for (const group of grouped.values()) {
             const first = group[0]!;
-            const paletteBlocks = [
-                ...new Set(group.map((block) => block.blockName)),
-            ];
-            const palette = Object.fromEntries([
-                [
-                    "0",
-                    {
-                        type: "compound",
-                        value: {
-                            name: {
-                                type: "string",
-                                value: "minecraft:air",
-                            },
-                            states: { type: "compound", value: {} },
-                            version: { type: "int", value: 0 },
-                        },
-                    },
-                ],
-                ...paletteBlocks.map((blockName, index) => [
-                    String(index + 1),
-                    {
-                        type: "compound",
-                        value: {
-                            name: { type: "string", value: blockName },
-                            states: { type: "compound", value: {} },
-                            version: { type: "int", value: 0 },
-                        },
-                    },
-                ]),
-            ]);
-            const paletteIndexByBlock = new Map(
-                paletteBlocks.map((blockName, index) => [blockName, index + 1]),
-            );
-            const bitsPerBlock = Math.max(
-                1,
-                Math.ceil(Math.log2(paletteBlocks.length + 1)),
-            );
-            const blockIndices = Array.from({ length: 4096 }, () => 0);
+            const groupedLayers = new Map<number, TestSubchunkBlock[]>();
             for (const block of group) {
-                blockIndices[
-                    createBedrockSubchunkBlockIndex(
-                        block.localX,
-                        block.localY,
-                        block.localZ,
-                    )
-                ] = paletteIndexByBlock.get(block.blockName) ?? 0;
+                const layer = block.layer ?? 0;
+                groupedLayers.set(layer, [
+                    ...(groupedLayers.get(layer) ?? []),
+                    block,
+                ]);
             }
+            const layerCount = Math.max(...groupedLayers.keys()) + 1;
+            const layers = Array.from({ length: layerCount }, (_value, layer) =>
+                createTestSubchunkLayer(groupedLayers.get(layer) ?? []),
+            );
 
             const raw =
                 helpers.entryContentTypeToFormatMap.SubChunkPrefix.serialize({
                     type: "compound",
                     value: {
                         version: { type: "byte", value: 9 },
-                        layerCount: { type: "byte", value: 1 },
+                        layerCount: { type: "byte", value: layerCount },
                         subChunkIndex: {
                             type: "byte",
                             value: first.subChunkY,
@@ -208,25 +176,7 @@ export async function createBedrockTerrainDb(
                             type: "list",
                             value: {
                                 type: "compound",
-                                value: [
-                                    {
-                                        storageVersion: {
-                                            type: "byte",
-                                            value: bitsPerBlock << 1,
-                                        },
-                                        palette: {
-                                            type: "compound",
-                                            value: palette,
-                                        },
-                                        block_indices: {
-                                            type: "list",
-                                            value: {
-                                                type: "int",
-                                                value: blockIndices,
-                                            },
-                                        },
-                                    },
-                                ],
+                                value: layers,
                             },
                         },
                     },
@@ -247,6 +197,84 @@ export async function createBedrockTerrainDb(
     } finally {
         await db.close();
     }
+}
+
+function createTestSubchunkLayer(blocks: TestSubchunkBlock[]) {
+    const paletteBlocks = [
+        ...new Map(
+            blocks.map((block) => [paletteBlockKey(block), block]),
+        ).values(),
+    ];
+    const palette = Object.fromEntries([
+        ["0", paletteNbt("minecraft:air", {}, 0)],
+        ...paletteBlocks.map((block, index) => [
+            String(index + 1),
+            paletteNbt(block.blockName, block.states ?? {}, block.version ?? 0),
+        ]),
+    ]);
+    const paletteIndexByBlock = new Map(
+        paletteBlocks.map((block, index) => [
+            paletteBlockKey(block),
+            index + 1,
+        ]),
+    );
+    const bitsPerBlock = Math.max(
+        1,
+        Math.ceil(Math.log2(paletteBlocks.length + 1)),
+    );
+    const blockIndices = Array.from({ length: 4096 }, () => 0);
+    for (const block of blocks) {
+        blockIndices[
+            createBedrockSubchunkBlockIndex(
+                block.localX,
+                block.localY,
+                block.localZ,
+            )
+        ] = paletteIndexByBlock.get(paletteBlockKey(block)) ?? 0;
+    }
+    return {
+        storageVersion: { type: "byte", value: bitsPerBlock << 1 },
+        palette: { type: "compound", value: palette },
+        block_indices: {
+            type: "list",
+            value: { type: "int", value: blockIndices },
+        },
+    };
+}
+
+function paletteBlockKey(block: TestSubchunkBlock): string {
+    return JSON.stringify([
+        block.blockName,
+        block.states ?? {},
+        block.version ?? 0,
+    ]);
+}
+
+function paletteNbt(
+    blockName: string,
+    states: Record<string, boolean | number | string>,
+    version: number,
+) {
+    return {
+        type: "compound",
+        value: {
+            name: { type: "string", value: blockName },
+            states: {
+                type: "compound",
+                value: Object.fromEntries(
+                    Object.entries(states).map(([key, value]) => [
+                        key,
+                        typeof value === "boolean"
+                            ? { type: "byte", value: value ? 1 : 0 }
+                            : typeof value === "number"
+                              ? { type: "int", value }
+                              : { type: "string", value },
+                    ]),
+                ),
+            },
+            version: { type: "int", value: version },
+        },
+    };
 }
 
 export function createBedrockSubchunkBlockIndex(

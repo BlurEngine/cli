@@ -5,9 +5,12 @@ export const MANAGED_PACKAGE_SCRIPTS = {
     minecraft: "blr minecraft",
     system: "blr system",
     world: "blr world",
+    "assets:check": "blr world build --check",
     clean: "blr clean",
     upgrade: "blr upgrade",
 } as const;
+
+export const NEW_PROJECT_CHECK_SCRIPT = "npm run assets:check && blr build";
 
 export const MANAGED_NODE_ENGINE = ">=22.12.0";
 

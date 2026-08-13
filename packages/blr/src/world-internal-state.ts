@@ -12,6 +12,13 @@ export type RuntimeWorldSeedState = {
     seededAt: string;
 };
 
+export type ProcessedWorldPublicationState = {
+    remoteFingerprint: string;
+    versionId: string;
+    worldBuildId: string;
+    publishedAt: string;
+};
+
 export type LocalServerSessionState = {
     processId: number;
     worldName: string;
@@ -22,6 +29,7 @@ export type LocalServerSessionState = {
 type InternalWorldStateEntry = {
     name: string;
     materializedRemote?: MaterializedProjectWorldRemoteState;
+    processedPublication?: ProcessedWorldPublicationState;
     runtimeSeed?: RuntimeWorldSeedState;
 };
 
@@ -94,6 +102,23 @@ function normalizeRuntimeSeedState(
     };
 }
 
+function normalizeProcessedWorldPublicationState(
+    value: unknown,
+): ProcessedWorldPublicationState | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    const remoteFingerprint = normalizeString(record.remoteFingerprint);
+    const versionId = normalizeString(record.versionId);
+    const worldBuildId = normalizeString(record.worldBuildId);
+    const publishedAt = normalizeString(record.publishedAt);
+    if (!remoteFingerprint || !versionId || !worldBuildId || !publishedAt) {
+        return undefined;
+    }
+    return { remoteFingerprint, versionId, worldBuildId, publishedAt };
+}
+
 function normalizeInternalWorldStateEntry(
     value: unknown,
 ): InternalWorldStateEntry | undefined {
@@ -111,6 +136,9 @@ function normalizeInternalWorldStateEntry(
         name,
         materializedRemote: normalizeMaterializedRemoteState(
             record.materializedRemote,
+        ),
+        processedPublication: normalizeProcessedWorldPublicationState(
+            record.processedPublication,
         ),
         runtimeSeed: normalizeRuntimeSeedState(record.runtimeSeed),
     };
@@ -247,6 +275,39 @@ export async function markProjectWorldMaterializedFromRemote(
             materializedAt: input.materializedAt ?? new Date().toISOString(),
         },
         runtimeSeed: current?.runtimeSeed,
+        processedPublication: current?.processedPublication,
+    }));
+}
+
+export async function readProcessedWorldPublicationState(
+    projectRoot: string,
+    worldName: string,
+): Promise<ProcessedWorldPublicationState | undefined> {
+    const state = await readInternalWorldState(projectRoot);
+    return state.worlds.find((entry) => entry.name === worldName)
+        ?.processedPublication;
+}
+
+export async function markProcessedWorldPublished(
+    projectRoot: string,
+    input: {
+        worldName: string;
+        remoteFingerprint: string;
+        versionId: string;
+        worldBuildId: string;
+        publishedAt?: string;
+    },
+): Promise<void> {
+    await updateInternalWorldEntry(projectRoot, input.worldName, (current) => ({
+        name: input.worldName,
+        materializedRemote: current?.materializedRemote,
+        runtimeSeed: current?.runtimeSeed,
+        processedPublication: {
+            remoteFingerprint: input.remoteFingerprint,
+            versionId: input.versionId,
+            worldBuildId: input.worldBuildId,
+            publishedAt: input.publishedAt ?? new Date().toISOString(),
+        },
     }));
 }
 
@@ -269,6 +330,7 @@ export async function writeRuntimeWorldSeedState(
     await updateInternalWorldEntry(projectRoot, input.worldName, (current) => ({
         name: input.worldName,
         materializedRemote: current?.materializedRemote,
+        processedPublication: current?.processedPublication,
         runtimeSeed: {
             sourceIdentity: input.sourceIdentity,
             seededAt: input.seededAt ?? new Date().toISOString(),
@@ -281,12 +343,13 @@ export async function clearRuntimeWorldSeedState(
     worldName: string,
 ): Promise<void> {
     await updateInternalWorldEntry(projectRoot, worldName, (current) => {
-        if (!current?.materializedRemote) {
+        if (!current?.materializedRemote && !current?.processedPublication) {
             return undefined;
         }
         return {
             name: current.name,
             materializedRemote: current.materializedRemote,
+            processedPublication: current.processedPublication,
         };
     });
 }

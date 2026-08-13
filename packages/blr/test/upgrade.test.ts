@@ -22,6 +22,22 @@ type BlurConfigShape = {
 
 test("upgradeProjectScaffold migrates legacy project state and reconciles managed files", async (t) => {
     const projectRoot = await copyFixtureProject(t, "legacy-project-v0");
+    await writeFile(
+        path.join(projectRoot, "package.json"),
+        `${JSON.stringify(
+            {
+                name: "legacy-project-v0",
+                private: true,
+                scripts: {
+                    build: "old build",
+                    check: "npm run project-specific-check",
+                },
+            },
+            null,
+            2,
+        )}\n`,
+        "utf8",
+    );
     const result = await upgradeProjectScaffold(
         projectRoot,
         path.join(projectRoot, "package.json"),
@@ -74,7 +90,10 @@ test("upgradeProjectScaffold migrates legacy project state and reconciles manage
     const packageJson = await readJsonFile<PackageJsonShape>(
         path.join(projectRoot, "package.json"),
     );
-    assert.deepEqual(packageJson.scripts, { ...MANAGED_PACKAGE_SCRIPTS });
+    assert.deepEqual(packageJson.scripts, {
+        ...MANAGED_PACKAGE_SCRIPTS,
+        check: "npm run project-specific-check",
+    });
     assert.equal(packageJson.engines?.node, ">=22.12.0");
 
     const gitIgnore = await readTextFile(path.join(projectRoot, ".gitignore"));

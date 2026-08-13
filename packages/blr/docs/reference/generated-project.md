@@ -52,6 +52,7 @@ Generated scripts:
 - `minecraft`
 - `system`
 - `world`
+- `assets:check`
 - `clean`
 - `upgrade`
 
@@ -287,6 +288,7 @@ Usage:
 - `blr package mctemplate` and `blr package mcworld` use this as the source world payload
 - `blr world pull` can materialize this folder from a remote S3-compatible backend
 - `blr world push` can publish this folder back to the configured remote backend
+- `blr world build` derives a verified processed copy without opening or mutating this folder
 - `blr create` does not generate this folder by default because an empty folder looks like a valid world when it is not
 - world-aware commands require a real Bedrock world with a `db/` directory
 
@@ -400,6 +402,7 @@ Typical contents may include:
 - BDS zip cache
 - provisioned BDS server files
 - cached remote world archives and extracted world sources under `.blr/cache/worlds/`
+- content-addressed processor caches and verified processed-world lineages
 - CLI-owned transient state under `.blr/state/`, such as prompt-silence state in `.blr/state/cli.json`
 - other CLI-owned runtime state
 
@@ -411,6 +414,8 @@ During `local-server` runs, `blr` may also manage runtime world hook files such 
 - `world_resource_packs.json`
 
 Those files are only written when the corresponding pack automation is enabled for the current project and current run.
+
+Configured `worldProcessors` may also publish immutable JSON sets and a stable generated TypeScript pointer at project-owned paths declared in `blr.config.json`. These are generated inputs, not hand-authored runtime state. Transform results live under the CLI workspace or an explicit output path; they never overwrite `worlds/<worldName>/`.
 
 ## Build Output
 

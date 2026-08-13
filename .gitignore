@@ -6,3 +6,4 @@ dist/
 npm-debug.log*
 .env.local
 .blr/
+docs/superpowers/

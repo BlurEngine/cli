@@ -156,6 +156,10 @@ async function main() {
         packedFiles.has("README.md"),
         "Packed tarball must include a package README.",
     );
+    assert.ok(
+        packedFiles.has("dist/world-processing.d.ts"),
+        "Packed tarball must include the world-processing SDK declarations.",
+    );
 
     const smokeRoot = await mkdtemp(path.join(os.tmpdir(), "blr-pack-smoke-"));
 
@@ -170,6 +174,60 @@ async function main() {
 
         run(npmCommand, ["init", "-y"], smokeRoot);
         run(npmCommand, ["install", tarballPath], smokeRoot);
+
+        await writeFile(
+            path.join(smokeRoot, "world-processor.ts"),
+            `import {
+    defineWorldProcessor,
+    type WorldBlockLocation,
+    type WorldProcessorInput,
+    type WorldProcessorResult,
+} from "@blurengine/cli/world-processing";
+
+const location: WorldBlockLocation = { x: 0, y: 64, z: 0 };
+
+export const createSmokeWorldProcessor = defineWorldProcessor(() => ({
+    implementationRevision: "pack-smoke-v1",
+    logicalInputs: [],
+    async run(input: WorldProcessorInput): Promise<WorldProcessorResult> {
+        return {
+            logicalInputs: input.logicalInputs,
+            artifacts: [],
+            diagnostics: [{
+                code: "pack-smoke",
+                severity: "info",
+                message: "World-processing SDK is type-safe from the packed package.",
+                location,
+            }],
+            mutations: [],
+        };
+    },
+}));
+`,
+            "utf8",
+        );
+        await writeFile(
+            path.join(smokeRoot, "tsconfig.json"),
+            `${JSON.stringify(
+                {
+                    compilerOptions: {
+                        module: "NodeNext",
+                        moduleResolution: "NodeNext",
+                        strict: true,
+                        noEmit: true,
+                    },
+                    include: ["world-processor.ts"],
+                },
+                null,
+                2,
+            )}\n`,
+            "utf8",
+        );
+        run(
+            npmCommand,
+            ["exec", "--", "tsc", "--noEmit", "-p", "tsconfig.json"],
+            smokeRoot,
+        );
 
         const installedCliEntry = path.join(
             smokeRoot,

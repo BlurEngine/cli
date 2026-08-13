@@ -37,6 +37,11 @@ import type {
     BlurProject,
     MinecraftProduct,
 } from "./types.js";
+import {
+    assertValidProjectWorldSource,
+    resolveConfiguredWorldSourcePath,
+} from "./world.js";
+import { runWorldProcessorArtifactPipeline } from "./world-processing/processor-build.js";
 
 export type MinecraftDevelopmentRootResolution = {
     explicitPath?: string;
@@ -59,6 +64,12 @@ type BuildProjectOptions = {
     pipeline?: BebePipelineIntent;
     zoneEditor?: {
         enabled?: boolean;
+    };
+    worldProcessing?: {
+        enabled?: boolean;
+        signal?: AbortSignal;
+        isCurrent?: () => boolean;
+        verifyMutations?: boolean;
     };
 };
 
@@ -861,6 +872,9 @@ export async function buildProject(
         throw new Error("Runtime scripts require a BDS behavior pack.");
     }
 
+    if (options.worldProcessing?.enabled !== false) {
+        await runBuildWorldProcessors(projectRoot, config, pipeline, options);
+    }
     await stageProjectContent(projectRoot, config, artifacts, options.debug);
     const bakedBebeAssets = await bakeBebeAssets({
         debug: options.debug,
@@ -1016,6 +1030,61 @@ export async function buildProject(
     });
 
     return artifacts;
+}
+
+async function runBuildWorldProcessors(
+    projectRoot: string,
+    config: BlurProject,
+    pipeline: BebePipelineIntent,
+    options: BuildProjectOptions,
+): Promise<void> {
+    const worldNames = [
+        ...new Set(
+            config.worldProcessors
+                .filter((processor) => {
+                    switch (pipeline) {
+                        case "dev":
+                            return processor.applyOn.dev;
+                        case "package":
+                            return processor.applyOn.package;
+                        case "build":
+                            return processor.applyOn.build;
+                        case "check":
+                            return processor.applyOn.check;
+                    }
+                })
+                .map((processor) => processor.sourceWorld),
+        ),
+    ].sort();
+    const signal =
+        options.worldProcessing?.signal ?? new AbortController().signal;
+    for (const worldName of worldNames) {
+        const worldSourcePath = resolveConfiguredWorldSourcePath(
+            config,
+            worldName,
+        );
+        const sourceWorldDirectory = await assertValidProjectWorldSource(
+            projectRoot,
+            worldSourcePath,
+            `run ${pipeline} world processors for ${worldName}`,
+        );
+        const result = await runWorldProcessorArtifactPipeline({
+            projectRoot,
+            worldName,
+            sourceWorldDirectory,
+            configs: config.worldProcessors,
+            pipeline,
+            mode: pipeline === "check" ? "check" : "bake",
+            signal,
+            isCurrent: options.worldProcessing?.isCurrent,
+            verifyMutations: options.worldProcessing?.verifyMutations,
+        });
+        if (result.status === "stale") {
+            throw new Error(
+                `World processor run for ${worldName} was superseded before publication.`,
+            );
+        }
+    }
 }
 
 export async function cleanProject(projectRoot: string): Promise<void> {

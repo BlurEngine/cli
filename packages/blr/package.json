@@ -21,6 +21,12 @@
     "url": "https://github.com/BlurEngine/cli/issues"
   },
   "type": "module",
+  "exports": {
+    "./world-processing": {
+      "types": "./dist/world-processing.d.ts",
+      "import": "./dist/world-processing.js"
+    }
+  },
   "bin": {
     "blr": "./dist/blr.js"
   },
@@ -34,6 +40,7 @@
     "CHANGELOG.md",
     "NOTICE"
   ],
+  "types": "./dist/world-processing.d.ts",
   "scripts": {
     "sync:legal": "node ./scripts/sync-legal-files.mjs",
     "generate:schema": "node ./scripts/generate-config-schema.mjs",

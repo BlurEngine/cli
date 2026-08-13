@@ -4,6 +4,7 @@ export type Language = "ts" | "js";
 
 export type VersionTuple = [number, number, number];
 export type WorldBackend = "local" | "s3";
+export type WorldPushPolicy = "authored" | "processed";
 export type MinecraftChannel = "stable" | "preview";
 export type WorldSyncProjectMode = "prompt" | "auto" | "manual";
 export type WorldSyncRuntimeMode = "prompt" | "preserve" | "replace" | "backup";
@@ -12,6 +13,57 @@ export type WorldPackageLayout = "bedrock-root" | "com";
 export type WorldImageDimension = "overworld" | "nether" | "end";
 export type BebeDiagnosticSeverity = "ignore" | "warn" | "error";
 export type BebeDiagnosticPipeline = "dev" | "build" | "package" | "check";
+
+export type WorldProcessorCapability = "observer" | "artifact" | "transform";
+
+export interface WorldProcessorApplyOn {
+    dev: boolean;
+    build: boolean;
+    package: boolean;
+    check: boolean;
+    worldBuild: boolean;
+    worldPush: boolean;
+}
+
+export interface BlurConfigWorldProcessorApplyOnFile {
+    dev?: boolean;
+    build?: boolean;
+    package?: boolean;
+    check?: boolean;
+    worldBuild?: boolean;
+    worldPush?: boolean;
+}
+
+/** Trusted project processor that derives artifacts or staged world mutations. */
+export interface BlurConfigWorldProcessorFile {
+    id: string;
+    module: string;
+    export?: string;
+    sourceWorld: string;
+    capabilities?: WorldProcessorCapability[];
+    dependsOn?: string[];
+    inputPaths?: string[];
+    outputRoot?: string;
+    payloadFileNames?: Record<string, string>;
+    runtimePointerPath?: string;
+    auditOutputPath?: string;
+    applyOn?: BlurConfigWorldProcessorApplyOnFile;
+}
+
+export interface ResolvedWorldProcessorConfig {
+    id: string;
+    module: string;
+    export: string;
+    sourceWorld: string;
+    capabilities: readonly WorldProcessorCapability[];
+    dependsOn: readonly string[];
+    inputPaths: readonly string[];
+    outputRoot?: string;
+    payloadFileNames: Readonly<Record<string, string>>;
+    runtimePointerPath?: string;
+    auditOutputPath?: string;
+    applyOn: Readonly<WorldProcessorApplyOn>;
+}
 
 export type MinecraftProduct =
     | "BedrockGDK"
@@ -116,6 +168,11 @@ export interface BlurConfigWorldFile {
      * World source backend. Use `s3` to enable `blr world pull/push` against an S3-compatible store.
      */
     backend?: WorldBackend;
+    /**
+     * Which remote channel `blr world push` publishes by default. Processed
+     * pushes require a current verified `blr world build` output.
+     */
+    pushPolicy?: WorldPushPolicy;
     /**
      * S3-compatible world backend coordinates.
      */
@@ -501,6 +558,10 @@ export interface BlurConfigFile {
      * Project-level defaults for `blr dev`.
      */
     dev?: BlurConfigDevFile;
+    /**
+     * Trusted project processors that derive artifacts or staged world mutations from an immutable selected world.
+     */
+    worldProcessors?: BlurConfigWorldProcessorFile[];
 }
 
 export interface PackManifestConfig {
@@ -531,6 +592,7 @@ export interface BlurProject {
     configPath: string;
     packageJsonPath: string;
     namespace: string;
+    worldProcessors: readonly ResolvedWorldProcessorConfig[];
     minecraft: {
         channel: MinecraftChannel;
         targetVersion: string;
@@ -624,6 +686,7 @@ export interface BlurProject {
     };
     world: {
         backend: WorldBackend;
+        pushPolicy: WorldPushPolicy;
         s3: {
             bucket: string;
             region: string;

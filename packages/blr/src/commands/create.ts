@@ -33,6 +33,7 @@ import { syncManagedProjectInstructions } from "../project-instructions.js";
 import {
     MANAGED_PACKAGE_SCRIPTS,
     MANAGED_NODE_ENGINE,
+    NEW_PROJECT_CHECK_SCRIPT,
     reconcileManagedGitIgnore,
 } from "../managed-project.js";
 import { runPrompt } from "../prompt.js";
@@ -260,7 +261,10 @@ function createPackageJson(
         private: true,
         type: "module",
         packageManager: PACKAGE_MANAGER_VERSION_HINTS[packageManager],
-        scripts: { ...MANAGED_PACKAGE_SCRIPTS },
+        scripts: {
+            ...MANAGED_PACKAGE_SCRIPTS,
+            check: NEW_PROJECT_CHECK_SCRIPT,
+        },
         dependencies,
         devDependencies,
         engines: {

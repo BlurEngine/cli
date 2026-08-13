@@ -62,4 +62,8 @@ test("generate-config-schema emits the packaged draft-07 schema with config desc
         rootDefinition?.properties?.minecraft?.description,
         "Project-level Minecraft targeting defaults.",
     );
+    assert.equal(
+        rootDefinition?.properties?.worldProcessors?.description,
+        "Trusted project processors that derive artifacts or staged world mutations from an immutable selected world.",
+    );
 });

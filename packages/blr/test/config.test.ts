@@ -89,6 +89,151 @@ test("loadBlurConfig derives the default worldSourcePath from dev.localServer.wo
     assert.equal(config.features.resourcePack, false);
 });
 
+test("loadBlurConfig normalises portable world processor configuration", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "test_pack",
+        worldProcessors: [
+            {
+                id: "project-world-locations",
+                module: "./tooling/world-locations/provider.ts",
+                export: "createWorldLocationsProcessor",
+                sourceWorld: "Bedrock level",
+                capabilities: ["artifact", "transform"],
+                dependsOn: [],
+                inputPaths: ["tooling/world-locations/source.json"],
+                outputRoot:
+                    "world-data/Bedrock level/generated/world-locations",
+                payloadFileNames: {
+                    locations: "locations.json",
+                },
+                runtimePointerPath:
+                    "world-data/Bedrock level/generated/world-locations/current.generated.json",
+                auditOutputPath:
+                    "generated/world-locations/world-locations.audit.json",
+                applyOn: {
+                    build: true,
+                    package: true,
+                    worldBuild: true,
+                },
+            },
+        ],
+    });
+
+    const { config } = await loadBlurConfig(projectRoot);
+    assert.deepEqual(config.worldProcessors, [
+        {
+            id: "project-world-locations",
+            module: "./tooling/world-locations/provider.ts",
+            export: "createWorldLocationsProcessor",
+            sourceWorld: "Bedrock level",
+            capabilities: ["artifact", "transform"],
+            dependsOn: [],
+            inputPaths: ["tooling/world-locations/source.json"],
+            outputRoot: "world-data/Bedrock level/generated/world-locations",
+            payloadFileNames: {
+                locations: "locations.json",
+            },
+            runtimePointerPath:
+                "world-data/Bedrock level/generated/world-locations/current.generated.json",
+            auditOutputPath:
+                "generated/world-locations/world-locations.audit.json",
+            applyOn: {
+                dev: true,
+                build: true,
+                package: true,
+                check: true,
+                worldBuild: true,
+                worldPush: true,
+            },
+        },
+    ]);
+});
+
+test("loadBlurConfig rejects unsafe processor ids and output traversal", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "test_pack",
+        worldProcessors: [
+            {
+                id: "CON",
+                module: "./provider.ts",
+                sourceWorld: "Bedrock level",
+                capabilities: ["artifact"],
+                outputRoot: "../escape",
+                payloadFileNames: { locations: "locations.json" },
+            },
+        ],
+    });
+
+    await assert.rejects(
+        () => loadBlurConfig(projectRoot),
+        /worldProcessors\[0\]\.id must be one portable lowercase segment/,
+    );
+});
+
+test("loadBlurConfig rejects duplicate processor outputs", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "test_pack",
+        worldProcessors: [
+            {
+                id: "one",
+                module: "./one.ts",
+                sourceWorld: "Bedrock level",
+                capabilities: ["artifact"],
+                outputRoot: "src/generated/shared",
+                payloadFileNames: { output: "output.json" },
+            },
+            {
+                id: "two",
+                module: "./two.ts",
+                sourceWorld: "Bedrock level",
+                capabilities: ["artifact"],
+                outputRoot: "src/generated/shared",
+                payloadFileNames: { output: "output.json" },
+            },
+        ],
+    });
+
+    await assert.rejects(
+        () => loadBlurConfig(projectRoot),
+        /world processor output path "src\/generated\/shared\/output\.json" is claimed by both "one" and "two"/,
+    );
+});
+
+test("loadBlurConfig rejects runtime pointers that are neither TypeScript nor JSON", async (t) => {
+    const projectRoot = await createTempDirectory(t, "blr-config-");
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "test_pack",
+        worldProcessors: [
+            {
+                id: "project-locations",
+                module: "./tooling/world-locations/provider.ts",
+                sourceWorld: "Bedrock level",
+                capabilities: ["artifact"],
+                outputRoot: "world-data/Bedrock level/generated/locations",
+                payloadFileNames: { locations: "locations.json" },
+                runtimePointerPath:
+                    "world-data/Bedrock level/generated/locations/current.generated.txt",
+            },
+        ],
+    });
+
+    await assert.rejects(
+        () => loadBlurConfig(projectRoot),
+        /runtimePointerPath must end in \.ts or \.json/,
+    );
+});
+
 test("loadBlurConfig enables local-server scripting log compaction by default", async (t) => {
     const projectRoot = await createTempDirectory(t, "blr-config-");
     await createMinimalProject(projectRoot, {
@@ -664,4 +809,31 @@ test("loadBlurConfig respects environment overrides for local-server worldSync m
     const { config } = await loadBlurConfig(projectRoot);
     assert.equal(config.dev.localServer.worldSync.projectWorldMode, "auto");
     assert.equal(config.dev.localServer.worldSync.runtimeWorldMode, "backup");
+});
+
+test("loadBlurConfig defaults authored world pushes and accepts processed publication policy", async (t) => {
+    const authoredRoot = await createTempDirectory(
+        t,
+        "blr-config-world-push-authored-",
+    );
+    await createMinimalProject(authoredRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "fixture",
+    });
+    const authored = await loadBlurConfig(authoredRoot);
+    assert.equal(authored.config.world.pushPolicy, "authored");
+
+    const processedRoot = await createTempDirectory(
+        t,
+        "blr-config-world-push-processed-",
+    );
+    await createMinimalProject(processedRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "fixture",
+        world: { pushPolicy: "processed" },
+    });
+    const processed = await loadBlurConfig(processedRoot);
+    assert.equal(processed.config.world.pushPolicy, "processed");
 });

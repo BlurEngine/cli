@@ -31,6 +31,7 @@ import type {
     BlurProject,
     PermissionLevel,
 } from "./types.js";
+import type { ResolvedWorldInput } from "./world-input.js";
 import {
     appendWorldSourceHint,
     assertValidProjectWorldSource,
@@ -1122,12 +1123,26 @@ async function syncProjectWorldSource(
     projectRoot: string,
     config: BlurProject,
     state: ResolvedBdsState,
-    options: { worldMode: BdsWorldApplyMode; requireWorldSource: boolean },
+    options: {
+        worldMode: BdsWorldApplyMode;
+        requireWorldSource: boolean;
+        worldInput?: ResolvedWorldInput;
+    },
     debug?: DebugLogger,
 ): Promise<void> {
-    const hasWorldSource = await exists(state.worldSourceDirectory);
+    const inputDirectory =
+        options.worldInput?.directory ?? state.worldSourceDirectory;
+    if (
+        options.worldInput &&
+        options.worldInput.worldName !== state.worldName
+    ) {
+        throw new Error(
+            `Resolved world input ${options.worldInput.worldName} cannot seed BDS world ${state.worldName}.`,
+        );
+    }
+    const hasWorldSource = await exists(inputDirectory);
     if (!hasWorldSource) {
-        if (options.requireWorldSource) {
+        if (options.requireWorldSource && !options.worldInput) {
             try {
                 await assertValidProjectWorldSource(
                     projectRoot,
@@ -1143,12 +1158,12 @@ async function syncProjectWorldSource(
             }
         }
         debug?.log("bds", "no project world source present", {
-            worldSourceDirectory: state.worldSourceDirectory,
+            worldSourceDirectory: inputDirectory,
         });
         return;
     }
 
-    if (options.requireWorldSource) {
+    if (options.requireWorldSource && !options.worldInput) {
         try {
             await assertValidProjectWorldSource(
                 projectRoot,
@@ -1176,9 +1191,18 @@ async function syncProjectWorldSource(
         return;
     }
 
-    await copyDirectory(state.worldSourceDirectory, state.worldDirectory);
+    if (
+        options.worldInput &&
+        !(await exists(path.join(inputDirectory, "db")))
+    ) {
+        throw new Error(
+            `Resolved ${options.worldInput.kind} world input is missing its db directory: ${inputDirectory}.`,
+        );
+    }
+    await copyDirectory(inputDirectory, state.worldDirectory);
     debug?.log("bds", "copied project world source into runtime world", {
-        source: state.worldSourceDirectory,
+        source: inputDirectory,
+        inputKind: options.worldInput?.kind ?? "authored",
         destination: state.worldDirectory,
         worldMode: options.worldMode,
     });
@@ -1241,7 +1265,10 @@ export async function replaceRuntimeWorldFromProjectSource(
     projectRoot: string,
     config: BlurProject,
     state: ResolvedBdsState,
-    options: { requireWorldSource?: boolean } = {},
+    options: {
+        requireWorldSource?: boolean;
+        worldInput?: ResolvedWorldInput;
+    } = {},
     debug?: DebugLogger,
 ): Promise<void> {
     await syncProjectWorldSource(
@@ -1251,6 +1278,7 @@ export async function replaceRuntimeWorldFromProjectSource(
         {
             worldMode: "replace",
             requireWorldSource: options.requireWorldSource ?? true,
+            worldInput: options.worldInput,
         },
         debug,
     );
@@ -1435,6 +1463,7 @@ export async function syncProjectToBds(
         requireWorldSource: boolean;
         copyPacks?: PackFeatureSelectionOverride;
         attachPacks?: PackFeatureSelectionOverride;
+        worldInput?: ResolvedWorldInput;
     },
     debug?: DebugLogger,
 ): Promise<void> {
@@ -1450,6 +1479,7 @@ export async function syncProjectToBds(
         {
             worldMode: options.worldMode,
             requireWorldSource: options.requireWorldSource,
+            worldInput: options.worldInput,
         },
         debug,
     );
@@ -1525,6 +1555,7 @@ export class BdsServerController {
         options: {
             worldMode?: BdsWorldApplyMode;
             requireWorldSource?: boolean;
+            worldInput?: ResolvedWorldInput;
         } = {},
     ): Promise<void> {
         this.options.debug?.log("bds", "applying mode", {
@@ -1563,6 +1594,7 @@ export class BdsServerController {
                     requireWorldSource,
                     copyPacks: this.options.copyPacks,
                     attachPacks: this.options.attachPacks,
+                    worldInput: options.worldInput,
                 },
                 this.options.debug,
             );
@@ -1579,6 +1611,7 @@ export class BdsServerController {
                 requireWorldSource,
                 copyPacks: this.options.copyPacks,
                 attachPacks: this.options.attachPacks,
+                worldInput: options.worldInput,
             },
             this.options.debug,
         );

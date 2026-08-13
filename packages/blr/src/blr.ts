@@ -19,6 +19,7 @@ import {
 import { runUpgradeCommand } from "./commands/upgrade.js";
 import {
     runWorldCaptureCommand,
+    runWorldBuildCommand,
     runWorldImageCommand,
     runWorldLevelDatDiffCommand,
     runWorldLevelDatEditCommand,
@@ -31,6 +32,7 @@ import {
     runWorldUnlockCommand,
     runWorldUseCommand,
     runWorldVersionsCommand,
+    type WorldBuildCommandOptions,
 } from "./commands/world.js";
 import { isPromptCancelledError } from "./prompt.js";
 
@@ -514,6 +516,48 @@ async function main(): Promise<void> {
         );
 
     world
+        .command("build")
+        .description(
+            "Build or verify a content-addressed processed world without modifying its authored source.",
+        )
+        .argument(
+            "[worldName]",
+            "World name. Defaults to dev.localServer.worldName",
+        )
+        .option(
+            "--check",
+            "Verify that processed artifacts and world lineage are current without project writes",
+            false,
+        )
+        .option(
+            "--dry-run",
+            "Alias for --check; compute and validate without project writes",
+            false,
+        )
+        .option(
+            "--processor <id...>",
+            "Run only the selected processor ids and their declared dependencies",
+        )
+        .option(
+            "--audit",
+            "Write configured processor audit reports during a successful build",
+            false,
+        )
+        .option(
+            "--output <path>",
+            "Also copy the verified processed world to a new explicit directory",
+        )
+        .option("--json", "Print the processed-world result as JSON", false)
+        .action(
+            async (
+                worldName: string | undefined,
+                opts: WorldBuildCommandOptions,
+            ) => {
+                await runWorldBuildCommand(worldName, opts);
+            },
+        );
+
+    world
         .command("use")
         .description("Set the active project world in blr.config.json.")
         .argument(
@@ -848,6 +892,10 @@ async function main(): Promise<void> {
         .option(
             "--reason <reason>",
             "Optional lock reason recorded in remote lock metadata",
+        )
+        .option(
+            "--channel <channel>",
+            "World publication channel: authored or processed (defaults to world.pushPolicy)",
         )
         .option(
             "--debug [enabled]",

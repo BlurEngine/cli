@@ -5,6 +5,7 @@ import test from "node:test";
 import { S3Client, S3ServiceException } from "@aws-sdk/client-s3";
 import AdmZip from "adm-zip";
 import {
+    assertRuntimeWorldCaptureIsAuthored,
     runWorldListCommand,
     runWorldPushCommand,
     runWorldVersionsCommand,
@@ -12,6 +13,10 @@ import {
 import { loadBlurConfig } from "../src/config.js";
 import { exists } from "../src/fs.js";
 import { buildTrackedProjectWorldFingerprint } from "../src/project-world-state.js";
+import {
+    readMaterializedProjectWorldRemoteState,
+    readProcessedWorldPublicationState,
+} from "../src/world-internal-state.js";
 import {
     describeWorldStatus,
     listRemoteWorldVersionsFromS3,
@@ -41,6 +46,16 @@ function createBehaviorManifest(projectName: string) {
         ],
     };
 }
+
+test("processed runtime worlds cannot be captured into authored source", () => {
+    assert.throws(
+        () => assertRuntimeWorldCaptureIsAuthored("processed:build-123"),
+        /refusing to capture a processed runtime world/i,
+    );
+    assert.doesNotThrow(() =>
+        assertRuntimeWorldCaptureIsAuthored("sha256:authored-source"),
+    );
+});
 
 async function createMinimalProject(
     projectRoot: string,
@@ -876,6 +891,175 @@ test("pushWorldToS3 returns the pushed version id and writes the minimal tracked
     assert.equal(
         trackedWorlds.worlds[0]?.remoteFingerprint,
         expectedFingerprint,
+    );
+});
+
+test("processed world pushes use a separate remote channel and never mark authored source as materialized", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-world-push-processed-",
+    );
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "test_pack",
+        world: {
+            backend: "s3",
+            pushPolicy: "processed",
+            s3: {
+                bucket: "example-worlds",
+                region: "eu-west-2",
+                keyPrefix: "worlds",
+            },
+        },
+    });
+    const { config } = await loadBlurConfig(projectRoot);
+    const authored = path.join(projectRoot, "worlds", "Bedrock level");
+    const processed = path.join(projectRoot, ".blr", "processed", "world");
+    await mkdir(path.join(authored, "db"), { recursive: true });
+    await mkdir(path.join(processed, "db"), { recursive: true });
+
+    const putKeys: string[] = [];
+    const originalSend = (S3Client.prototype as any).send;
+    (S3Client.prototype as any).send = async (command: any) => {
+        switch (command.constructor.name) {
+            case "GetBucketVersioningCommand":
+                return { Status: "Enabled" };
+            case "HeadObjectCommand":
+                throw createS3Error("NotFound", 404);
+            case "GetObjectCommand":
+                if (isLockObjectKey(command.input.Key)) {
+                    throw createS3Error("NoSuchKey", 404);
+                }
+                throw new Error(`Unexpected object read ${command.input.Key}`);
+            case "PutObjectCommand":
+                putKeys.push(command.input.Key);
+                return isLockObjectKey(command.input.Key)
+                    ? { ETag: '"etag-lock"' }
+                    : { VersionId: "ver-processed", ETag: '"etag-world"' };
+            case "DeleteObjectCommand":
+                return {};
+            default:
+                throw new Error(
+                    `Unexpected command ${command.constructor.name}`,
+                );
+        }
+    };
+    t.after(() => {
+        (S3Client.prototype as any).send = originalSend;
+    });
+
+    const pushed = await pushWorldToS3(projectRoot, config, "Bedrock level", {
+        channel: "processed",
+        worldInputDirectory: processed,
+        worldBuildId: "build-123",
+        forceLock: true,
+    });
+
+    assert.equal(
+        pushed.context.objectKey,
+        "worlds/processed/Bedrock level.zip",
+    );
+    assert.equal(putKeys.includes("worlds/processed/Bedrock level.zip"), true);
+    assert.equal(
+        await readMaterializedProjectWorldRemoteState(
+            projectRoot,
+            "Bedrock level",
+        ),
+        undefined,
+    );
+    const publication = await readProcessedWorldPublicationState(
+        projectRoot,
+        "Bedrock level",
+    );
+    assert.equal(
+        publication?.remoteFingerprint,
+        buildTrackedProjectWorldFingerprint({
+            backend: "s3",
+            bucket: "example-worlds",
+            endpoint: "",
+            objectKey: "worlds/processed/Bedrock level.zip",
+        }),
+    );
+    assert.equal(publication?.versionId, "ver-processed");
+    assert.equal(publication?.worldBuildId, "build-123");
+    assert.match(publication?.publishedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(
+        await exists(path.join(projectRoot, "worlds", "worlds.json")),
+        false,
+    );
+});
+
+test("processed push acquires the remote lock before rejecting a missing current world build", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-world-push-preflight-",
+    );
+    await createMinimalProject(projectRoot, {
+        schemaVersion: 1,
+        projectVersion: 1,
+        namespace: "test_pack",
+        world: {
+            backend: "s3",
+            pushPolicy: "processed",
+            s3: {
+                bucket: "example-worlds",
+                region: "eu-west-2",
+                keyPrefix: "worlds",
+            },
+        },
+    });
+    await mkdir(path.join(projectRoot, "worlds", "Bedrock level", "db"), {
+        recursive: true,
+    });
+
+    const events: string[] = [];
+    const originalSend = (S3Client.prototype as any).send;
+    (S3Client.prototype as any).send = async (command: any) => {
+        events.push(`${command.constructor.name}:${command.input.Key ?? ""}`);
+        switch (command.constructor.name) {
+            case "GetObjectCommand":
+                throw createS3Error("NoSuchKey", 404);
+            case "PutObjectCommand":
+                return isLockObjectKey(command.input.Key)
+                    ? { ETag: '"etag-lock"' }
+                    : { VersionId: "unexpected-world-version" };
+            case "DeleteObjectCommand":
+                return {};
+            case "GetBucketVersioningCommand":
+                return { Status: "Enabled" };
+            case "HeadObjectCommand":
+                throw createS3Error("NotFound", 404);
+            default:
+                throw new Error(
+                    `Unexpected command ${command.constructor.name}`,
+                );
+        }
+    };
+    t.after(() => {
+        (S3Client.prototype as any).send = originalSend;
+    });
+
+    const previous = process.cwd();
+    process.chdir(projectRoot);
+    try {
+        await assert.rejects(
+            () => runWorldPushCommand(undefined, {}),
+            /processed push.*blr world build/i,
+        );
+    } finally {
+        process.chdir(previous);
+    }
+
+    const lockPut = events.findIndex((event) =>
+        event.startsWith("PutObjectCommand:worlds/Bedrock level.lock.json"),
+    );
+    assert.notEqual(lockPut, -1);
+    assert.equal(
+        events.some((event) =>
+            event.includes("worlds/processed/Bedrock level.zip"),
+        ),
+        false,
     );
 });
 

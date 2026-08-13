@@ -157,6 +157,7 @@ Optional world source backend configuration.
 Fields:
 
 - `backend`: `local | s3`
+- `pushPolicy`: `authored | processed`
 - `s3.bucket`: bucket name for remote world storage
 - `s3.region`: region for the S3 client
 - `s3.endpoint`: optional custom S3-compatible endpoint
@@ -168,6 +169,7 @@ Fields:
 Defaults if omitted:
 
 - `backend`: `local`
+- `pushPolicy`: `authored`
 - `s3.bucket`: empty
 - `s3.region`: empty in config, then resolved from `AWS_REGION` / `AWS_DEFAULT_REGION`, then `us-east-1`
 - `s3.endpoint`: empty
@@ -226,6 +228,59 @@ Notes:
   - `blr world push`
   - `blr dev` project-world remote sync
 - `blr dev` stays lenient about local world edits and uses `worlds/worlds.json` as the project truth instead of trying to infer remote freshness from local files alone
+- `pushPolicy: processed` makes `blr world push` require and publish the exact current verified processed-world build on a separate remote channel
+
+### `worldProcessors`
+
+Optional ordered trusted processors that derive artifacts or staged mutations from an immutable world snapshot.
+
+Example:
+
+```json
+{
+  "worldProcessors": [
+    {
+      "id": "project-locations",
+      "module": "./tooling/world/locations.ts",
+      "export": "createLocationsProcessor",
+      "sourceWorld": "Bedrock level",
+      "capabilities": ["artifact", "transform"],
+      "dependsOn": [],
+      "inputPaths": ["world-data/Bedrock level/locations.source.json"],
+      "outputRoot": "world-data/Bedrock level/generated/locations",
+      "payloadFileNames": {
+        "locations": "locations.json"
+      },
+      "runtimePointerPath": "world-data/Bedrock level/generated/locations/current.generated.json",
+      "applyOn": {
+        "dev": true,
+        "build": true,
+        "package": true,
+        "check": true,
+        "worldBuild": true,
+        "worldPush": true
+      }
+    }
+  ]
+}
+```
+
+Fields:
+
+- `id`: portable unique processor id
+- `module`: explicit project-relative module or bare package export
+- `export`: named factory export
+- `sourceWorld`: authoritative selected authored world
+- `capabilities`: any of `observer`, `artifact`, `transform`
+- `dependsOn`: preceding processor ids whose results are provided as immutable dependencies
+- `inputPaths`: declared project-relative logical input files
+- `outputRoot`: required immutable-set root for artifact processors
+- `payloadFileNames`: artifact id to relative payload filename map
+- `runtimePointerPath`: optional generated `.json` or `.ts` pointer to the current immutable set. Prefer JSON in world-owned data directories; use TypeScript only when the consumer explicitly owns generated source code.
+- `auditOutputPath`: optional audit output outside the runtime artifact set
+- `applyOn`: intent switches for `dev`, `build`, `package`, `check`, `worldBuild`, and `worldPush`
+
+Processor ids, input paths, and outputs are validated for portability and project containment. Output ownership cannot overlap across processors. See [World Processing](./world-processing.md) for source-snapshot, observation, cache, publication, and staged-mutation guarantees.
 
 ### `package`
 

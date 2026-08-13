@@ -5,7 +5,9 @@ import test, { type TestContext } from "node:test";
 import { loadBlurConfig } from "../src/config.js";
 import { BLR_ENV_BDS_VERSION } from "../src/constants.js";
 import {
+    assertDevWorldProcessingCompatibility,
     buildRemoteWorldSyncFailureMessage,
+    createWorldProcessorWatchPlan,
     mergePipelineModes,
     resolveRuntimeWorldDecision,
     resolveProjectWatchChangeAction,
@@ -581,6 +583,75 @@ test("resolveProjectWatchChangeAction reloads source changes, syncs pack changes
         message:
             "[dev] change ignored: scripts/shared.ts. Only files under src/ trigger dev reloads.",
     });
+});
+
+test("processed dev worlds reject runtime-to-source capture", () => {
+    assert.throws(
+        () =>
+            assertDevWorldProcessingCompatibility({
+                watchWorld: true,
+                worldName: "Bedrock level",
+                worldProcessors: [
+                    {
+                        id: "locations",
+                        sourceWorld: "Bedrock level",
+                        capabilities: ["artifact", "transform"],
+                        applyOn: { dev: true },
+                    },
+                ],
+            }),
+        /processed play mode.*watch-world.*authored world/i,
+    );
+
+    assert.doesNotThrow(() =>
+        assertDevWorldProcessingCompatibility({
+            watchWorld: true,
+            worldName: "Bedrock level",
+            worldProcessors: [
+                {
+                    id: "locations",
+                    sourceWorld: "Bedrock level",
+                    capabilities: ["artifact"],
+                    applyOn: { dev: true },
+                },
+            ],
+        }),
+    );
+});
+
+test("world processor watch plans cover config, provider, declared inputs, and authored world changes", () => {
+    const plan = createWorldProcessorWatchPlan({
+        worldSourcePath: "worlds/Bedrock level",
+        processors: [
+            {
+                module: "./tooling/locations/processor.ts",
+                inputPaths: ["tooling/locations/catalogue.json"],
+            },
+        ],
+    });
+
+    assert.equal(plan.matches("blr.config.json"), true);
+    assert.equal(plan.matches("worlds/worlds.json"), true);
+    assert.equal(plan.matches("tooling/locations/processor.ts"), true);
+    assert.equal(plan.matches("tooling/locations/parser.ts"), true);
+    assert.equal(plan.matches("tooling/locations/catalogue.json"), true);
+    assert.equal(plan.matches("worlds/Bedrock level/db/000001.ldb"), true);
+    assert.equal(plan.matches("src/main.ts"), false);
+});
+
+test("world processor watch changes request a safe restart and config refresh", () => {
+    assert.deepEqual(
+        resolveProjectWatchChangeAction("tooling/locations/processor.ts", {
+            worldProcessorPaths: ["tooling/locations/**/*"],
+        }),
+        { kind: "restart", pipelineMode: "restart", reloadConfig: false },
+    );
+    assert.deepEqual(
+        resolveProjectWatchChangeAction("blr.config.json", {
+            worldProcessorPaths: ["tooling/locations/**/*"],
+        }),
+        { kind: "restart", pipelineMode: "restart", reloadConfig: true },
+    );
 });
 
 test("Bebe collection asset sources expand dev watch coverage for nested files", async (t) => {
