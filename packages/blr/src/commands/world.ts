@@ -29,12 +29,14 @@ import {
 } from "../interactive-prompt.js";
 import { readTrackedProjectWorldState } from "../project-world-state.js";
 import { isPromptCancelledError, runPrompt } from "../prompt.js";
-import type { BlurProject } from "../types.js";
+import type { BlurProject, WorldPushPolicy } from "../types.js";
 import {
     readActiveLocalServerSession,
+    readRuntimeWorldSeedState,
     writeRuntimeWorldSeedState,
 } from "../world-internal-state.js";
 import { computeProjectWorldSourceIdentity } from "../world-source-identity.js";
+import { buildProcessedWorld } from "../world-processing/processor-build.js";
 import {
     acquireRemoteWorldLock,
     describeWorldStatus,
@@ -85,6 +87,7 @@ type PullWorldCommandOptions = WorldSharedOptions & {
 type PushWorldCommandOptions = WorldSharedOptions & {
     unlock?: boolean;
     forceLock?: boolean;
+    channel?: string;
 };
 
 type LockWorldCommandOptions = WorldSharedOptions & {
@@ -101,6 +104,24 @@ type CaptureWorldCommandOptions = WorldRuntimeOptions & {
 };
 
 type WorldCommandOptions = WorldSharedOptions;
+export type WorldBuildCommandOptions = WorldCommandOptions & {
+    check?: boolean;
+    dryRun?: boolean;
+    processor?: string | string[];
+    audit?: boolean;
+    output?: string;
+    json?: boolean;
+};
+
+export function assertRuntimeWorldCaptureIsAuthored(
+    sourceIdentity: string | undefined,
+): void {
+    if (sourceIdentity?.startsWith("processed:")) {
+        throw new Error(
+            "Refusing to capture a processed runtime world into the authored source. Restart dev in author mode before capturing builder changes.",
+        );
+    }
+}
 type UseWorldCommandOptions = WorldCommandOptions;
 type ListWorldCommandOptions = WorldCommandOptions & {
     json?: boolean;
@@ -675,6 +696,71 @@ export async function runWorldStatusCommand(
     console.log(JSON.stringify(status, null, 2));
 }
 
+export async function runWorldBuildCommand(
+    requestedWorldName: string | undefined,
+    options: WorldBuildCommandOptions,
+): Promise<void> {
+    const { projectRoot, config } = await loadBlurConfig(process.cwd());
+    const selection = resolveSelectedWorld(config, requestedWorldName);
+    const processorIds = options.processor
+        ? Array.isArray(options.processor)
+            ? options.processor
+            : [options.processor]
+        : undefined;
+    const check = options.check === true || options.dryRun === true;
+    const hasApplicableProcessor = config.worldProcessors.some(
+        (processor) =>
+            processor.sourceWorld === selection.worldName &&
+            processor.applyOn.worldBuild,
+    );
+    if (!processorIds && !hasApplicableProcessor) {
+        const result = Object.freeze({
+            status: "current" as const,
+            worldName: selection.worldName,
+            processorIds: Object.freeze([]),
+            diagnostics: Object.freeze([]),
+        });
+        console.log(
+            options.json
+                ? JSON.stringify(result, null, 2)
+                : `No world processors apply to ${selection.worldName}; world processing is current.`,
+        );
+        return;
+    }
+    const sourceWorldDirectory = await assertValidProjectWorldSource(
+        projectRoot,
+        selection.worldSourcePath,
+        `build processed world ${selection.worldName}`,
+    );
+    const result = await buildProcessedWorld({
+        projectRoot,
+        worldName: selection.worldName,
+        sourceWorldDirectory,
+        configs: config.worldProcessors,
+        ...(processorIds ? { processorIds } : {}),
+        ...(options.output
+            ? { outputDirectory: path.resolve(process.cwd(), options.output) }
+            : {}),
+        audit: options.audit === true,
+        mode: check ? "check" : "bake",
+        signal: new AbortController().signal,
+    });
+    if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+    } else {
+        console.log(
+            check
+                ? `Processed world ${selection.worldName} is ${result.status} (${result.worldBuildId}).`
+                : `Processed world ${selection.worldName} ${result.status} at ${result.worldDirectory}.`,
+        );
+    }
+    if (check && result.status !== "current") {
+        throw new Error(
+            `Processed world ${selection.worldName} is stale. Run blr world build ${JSON.stringify(selection.worldName)}.`,
+        );
+    }
+}
+
 export async function runWorldLevelDatDumpCommand(
     requestedWorldName: string | undefined,
     options: WorldLevelDatDumpCommandOptions,
@@ -1101,14 +1187,27 @@ export async function runWorldPushCommand(
         requestedWorldName,
         config.dev.localServer.worldName,
     );
+    const channel = resolveWorldPushChannel(options.channel, config);
+    const pushOnce = (allowRemoteConflict = false) =>
+        channel === "processed"
+            ? pushCurrentProcessedWorld({
+                  projectRoot,
+                  config,
+                  worldName,
+                  options,
+                  allowRemoteConflict,
+                  debug,
+              })
+            : pushWorldToS3(projectRoot, config, worldName, {
+                  unlock: options.unlock,
+                  forceLock: options.forceLock,
+                  reason: options.reason,
+                  allowRemoteConflict,
+                  debug,
+              });
     let pushed;
     try {
-        pushed = await pushWorldToS3(projectRoot, config, worldName, {
-            unlock: options.unlock,
-            forceLock: options.forceLock,
-            reason: options.reason,
-            debug,
-        });
+        pushed = await pushOnce();
     } catch (error) {
         if (!(error instanceof WorldPushRemoteConflictError)) {
             throw error;
@@ -1125,13 +1224,7 @@ export async function runWorldPushCommand(
             return;
         }
 
-        pushed = await pushWorldToS3(projectRoot, config, worldName, {
-            unlock: options.unlock,
-            forceLock: options.forceLock,
-            reason: options.reason,
-            allowRemoteConflict: true,
-            debug,
-        });
+        pushed = await pushOnce(true);
     }
     const { context, versionId } = pushed;
     const versionSuffix =
@@ -1139,8 +1232,101 @@ export async function runWorldPushCommand(
             ? ` as version ${versionId}`
             : "";
     console.log(
-        `[world] Pushed "${worldName}" from ${context.worldSourcePath} to s3://${context.bucket}/${context.objectKey}${versionSuffix}`,
+        `[world] Pushed ${pushed.channel} world "${worldName}" from ${path.relative(projectRoot, pushed.inputDirectory)} to s3://${context.bucket}/${context.objectKey}${versionSuffix}`,
     );
+}
+
+function resolveWorldPushChannel(
+    value: string | undefined,
+    config: BlurProject,
+): WorldPushPolicy {
+    if (value === undefined || value.trim().length === 0) {
+        return config.world.pushPolicy;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "authored" || normalized === "processed") {
+        return normalized;
+    }
+    throw new Error(
+        `Unknown world push channel "${value}". Expected authored or processed.`,
+    );
+}
+
+async function pushCurrentProcessedWorld(input: {
+    projectRoot: string;
+    config: BlurProject;
+    worldName: string;
+    options: PushWorldCommandOptions;
+    allowRemoteConflict: boolean;
+    debug: ReturnType<typeof createDebugLogger>;
+}) {
+    const acquired = await acquireRemoteWorldLock(
+        input.projectRoot,
+        input.config,
+        input.worldName,
+        {
+            command: "push-processed",
+            force: input.options.forceLock,
+            reason: input.options.reason,
+            debug: input.debug,
+        },
+    );
+    let handedToPublisher = false;
+    try {
+        const worldSourcePath = resolveSelectedWorld(
+            input.config,
+            input.worldName,
+        ).worldSourcePath;
+        const checked = await buildProcessedWorld({
+            projectRoot: input.projectRoot,
+            worldName: input.worldName,
+            sourceWorldDirectory: resolveProjectWorldSourceDirectory(
+                input.projectRoot,
+                worldSourcePath,
+            ),
+            configs: input.config.worldProcessors,
+            pipeline: "world-build",
+            mode: "check",
+            signal: new AbortController().signal,
+        }).catch((error: unknown) => {
+            const detail =
+                error instanceof Error ? error.message : String(error);
+            throw new Error(
+                `Processed push for "${input.worldName}" requires a current verified world build. Run \`blr world build ${input.worldName}\` first. ${detail}`,
+            );
+        });
+        if (checked.status !== "current") {
+            throw new Error(
+                `Processed push for "${input.worldName}" is stale. Run \`blr world build ${input.worldName}\` and retry.`,
+            );
+        }
+        handedToPublisher = true;
+        return await pushWorldToS3(
+            input.projectRoot,
+            input.config,
+            input.worldName,
+            {
+                channel: "processed",
+                worldInputDirectory: checked.worldDirectory,
+                worldBuildId: checked.worldBuildId,
+                acquiredLock: acquired,
+                unlock: input.options.unlock,
+                reason: input.options.reason,
+                allowRemoteConflict: input.allowRemoteConflict,
+                debug: input.debug,
+            },
+        );
+    } catch (error) {
+        if (!handedToPublisher && acquired.releaseOnFailure) {
+            await releaseRemoteWorldLock(
+                input.projectRoot,
+                input.config,
+                input.worldName,
+                { debug: input.debug },
+            ).catch(() => undefined);
+        }
+        throw error;
+    }
 }
 
 export async function runWorldLockCommand(
@@ -1216,6 +1402,8 @@ export async function runWorldCaptureCommand(
         machine,
         worldName,
     );
+    const runtimeSeed = await readRuntimeWorldSeedState(projectRoot, worldName);
+    assertRuntimeWorldCaptureIsAuthored(runtimeSeed?.sourceIdentity);
 
     if (!(await exists(state.worldDirectory))) {
         throw new Error(

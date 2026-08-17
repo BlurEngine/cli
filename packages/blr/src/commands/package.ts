@@ -52,6 +52,8 @@ import {
     type ExportedWorldImageFile,
     type ExportWorldImageResult,
 } from "../world-image.js";
+import { buildProcessedWorld } from "../world-processing/processor-build.js";
+import { withVerifiedWorldSnapshot } from "../world-processing/world-snapshot.js";
 
 type PackageCommandOptions = {
     production?: boolean;
@@ -366,7 +368,7 @@ async function packageRawWorldTarget(
     projectRoot: string,
     config: BlurProject,
     worldName: string,
-    worldSourcePath: string,
+    worldInputDirectory: string,
     format: WorldPackageFormat,
     layout: WorldPackageLayout,
 ): Promise<{
@@ -386,10 +388,7 @@ async function packageRawWorldTarget(
         layout === "com"
             ? path.join(workspaceRoot, "worlds", "world")
             : workspaceRoot;
-    await copyRawWorldPackageDirectory(
-        resolveProjectWorldSourceDirectory(projectRoot, worldSourcePath),
-        worldWorkspaceRoot,
-    );
+    await copyRawWorldPackageDirectory(worldInputDirectory, worldWorkspaceRoot);
     await removeDirectory(outputFile);
     await writeWorldPackageArchive(workspaceRoot, outputFile, format);
 
@@ -403,7 +402,7 @@ async function packageAssetsTarget(
     projectRoot: string,
     config: BlurProject,
     worldName: string,
-    worldSourcePath: string,
+    worldInputDirectory: string,
 ): Promise<{
     workspaceRoot: string;
     outputFile: string;
@@ -431,15 +430,19 @@ async function packageAssetsTarget(
             worldName,
             fileName,
         );
-        const exported = await exportWorldImage({
-            worldSourceDirectory: resolveProjectWorldSourceDirectory(
-                projectRoot,
-                worldSourcePath,
-            ),
-            outputPath: imageOutputPath,
-            dimension: config.package.assets.worldImage.dimension,
-            scale: config.package.assets.worldImage.scale,
-        });
+        const exported = await withVerifiedWorldSnapshot(
+            {
+                worldName,
+                sourceWorldDirectory: worldInputDirectory,
+            },
+            (snapshot) =>
+                exportWorldImage({
+                    worldSourceDirectory: snapshot.worldDirectory,
+                    outputPath: imageOutputPath,
+                    dimension: config.package.assets.worldImage.dimension,
+                    scale: config.package.assets.worldImage.scale,
+                }),
+        );
         for (const output of exported.outputs) {
             manifest.assets.push(
                 toWorldImageAssetManifestEntry(
@@ -613,7 +616,7 @@ async function packageProjectTarget(
     projectRoot: string,
     config: BlurProject,
     worldName: string,
-    worldSourcePath: string,
+    worldInputDirectory: string,
     includeSelection: {
         behaviorPack: boolean;
         resourcePack: boolean;
@@ -664,13 +667,7 @@ async function packageProjectTarget(
         await copyDirectory(packSource, workspaceRoot);
     } else {
         if (targetDefinition.includeWorld) {
-            await copyDirectory(
-                resolveProjectWorldSourceDirectory(
-                    projectRoot,
-                    worldSourcePath,
-                ),
-                workspaceRoot,
-            );
+            await copyDirectory(worldInputDirectory, workspaceRoot);
         } else {
             await ensureDirectory(workspaceRoot);
         }
@@ -829,10 +826,53 @@ export async function runPackageCommand(
         }
     }
 
+    const requiresWorld = targets.some((target) =>
+        packageTargetRequiresWorld(target, config),
+    );
+    const authoredWorldDirectory = resolveProjectWorldSourceDirectory(
+        projectRoot,
+        selectedWorld.worldSourcePath,
+    );
+    const hasPackageProcessors = config.worldProcessors.some(
+        (processor) =>
+            processor.sourceWorld === selectedWorld.worldName &&
+            processor.applyOn.package,
+    );
+    const hasPackageArtifactProcessors = config.worldProcessors.some(
+        (processor) =>
+            processor.sourceWorld === selectedWorld.worldName &&
+            processor.applyOn.package &&
+            processor.capabilities.includes("artifact"),
+    );
+    let worldInputDirectory = authoredWorldDirectory;
+    let worldProcessingHandled = false;
+    if (requiresWorld && hasPackageProcessors) {
+        const processed = await buildProcessedWorld({
+            projectRoot,
+            worldName: selectedWorld.worldName,
+            sourceWorldDirectory: authoredWorldDirectory,
+            configs: config.worldProcessors,
+            pipeline: "package",
+            mode: "bake",
+            signal: new AbortController().signal,
+        });
+        if (processed.status === "stale") {
+            throw new Error(
+                `Processed package world ${selectedWorld.worldName} was superseded.`,
+            );
+        }
+        worldInputDirectory = processed.worldDirectory;
+        worldProcessingHandled = true;
+    }
+
     await buildProject(projectRoot, config, {
         production,
         debug,
         pipeline: "package",
+        worldProcessing: {
+            enabled: !worldProcessingHandled && hasPackageArtifactProcessors,
+            verifyMutations: requiresWorld,
+        },
     });
 
     for (const target of targets) {
@@ -842,7 +882,7 @@ export async function runPackageCommand(
                       projectRoot,
                       config,
                       selectedWorld.worldName,
-                      selectedWorld.worldSourcePath,
+                      worldInputDirectory,
                       worldPackageFormat,
                       config.package.world.layout,
                   )
@@ -851,14 +891,14 @@ export async function runPackageCommand(
                         projectRoot,
                         config,
                         selectedWorld.worldName,
-                        selectedWorld.worldSourcePath,
+                        worldInputDirectory,
                     )
                   : await packageProjectTarget(
                         target,
                         projectRoot,
                         config,
                         selectedWorld.worldName,
-                        selectedWorld.worldSourcePath,
+                        worldInputDirectory,
                         includeSelection,
                     );
         console.log(

@@ -54,6 +54,7 @@ import {
     DEFAULT_WORLD_PACKAGE_FORMAT,
     isWorldPackageFormat,
 } from "./world-package-formats.js";
+import { normalizeWorldProcessorConfigs } from "./world-processing/config.js";
 
 type LoadedBlurConfig = {
     projectRoot: string;
@@ -216,6 +217,13 @@ function ensureWorldBackend(
     return value === "local" || value === "s3" ? value : fallback;
 }
 
+function ensureWorldPushPolicy(
+    value: unknown,
+    fallback: import("./types.js").WorldPushPolicy,
+): import("./types.js").WorldPushPolicy {
+    return value === "authored" || value === "processed" ? value : fallback;
+}
+
 function ensureWorldSyncProjectMode(
     value: unknown,
     fallback: WorldSyncProjectMode,
@@ -368,6 +376,9 @@ function coerceBlurConfigFile(
         projectVersion:
             typeof projectVersion === "number" ? projectVersion : undefined,
         namespace,
+        worldProcessors: raw.worldProcessors as
+            | BlurConfigFile["worldProcessors"]
+            | undefined,
         minecraft: {
             channel: ensureMinecraftChannel(
                 minecraft.channel,
@@ -387,6 +398,7 @@ function coerceBlurConfigFile(
         },
         world: {
             backend: ensureWorldBackend(world.backend, DEFAULT_WORLD_BACKEND),
+            pushPolicy: ensureWorldPushPolicy(world.pushPolicy, "authored"),
             s3: {
                 bucket: ensureString(worldS3.bucket, ""),
                 region: ensureString(worldS3.region, ""),
@@ -769,6 +781,10 @@ export async function loadBlurConfig(
         configPath,
         packageJsonPath,
         namespace: configFile.namespace ?? "",
+        worldProcessors: normalizeWorldProcessorConfigs(
+            configFile.worldProcessors,
+            projectRoot,
+        ),
         minecraft: {
             channel: ensureMinecraftChannel(
                 configFile.minecraft?.channel,
@@ -989,6 +1005,10 @@ export async function loadBlurConfig(
             backend: ensureWorldBackend(
                 configFile.world?.backend,
                 DEFAULT_WORLD_BACKEND,
+            ),
+            pushPolicy: ensureWorldPushPolicy(
+                configFile.world?.pushPolicy,
+                "authored",
             ),
             s3: {
                 bucket: ensureString(configFile.world?.s3?.bucket, ""),

@@ -49,6 +49,13 @@
         "dev": {
           "$ref": "#/definitions/BlurConfigDevFile",
           "description": "Project-level defaults for `blr dev`."
+        },
+        "worldProcessors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BlurConfigWorldProcessorFile"
+          },
+          "description": "Trusted project processors that derive artifacts or staged world mutations from an immutable selected world."
         }
       },
       "additionalProperties": false,
@@ -95,6 +102,10 @@
           "$ref": "#/definitions/WorldBackend",
           "description": "World source backend. Use `s3` to enable `blr world pull/push` against an S3-compatible store."
         },
+        "pushPolicy": {
+          "$ref": "#/definitions/WorldPushPolicy",
+          "description": "Which remote channel `blr world push` publishes by default. Processed pushes require a current verified `blr world build` output."
+        },
         "s3": {
           "$ref": "#/definitions/BlurConfigWorldS3File",
           "description": "S3-compatible world backend coordinates."
@@ -106,6 +117,10 @@
     "WorldBackend": {
       "type": "string",
       "enum": ["local", "s3"]
+    },
+    "WorldPushPolicy": {
+      "type": "string",
+      "enum": ["authored", "processed"]
     },
     "BlurConfigWorldS3File": {
       "type": "object",
@@ -558,6 +573,90 @@
       },
       "additionalProperties": false,
       "description": "Local Link dashboard settings."
+    },
+    "BlurConfigWorldProcessorFile": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "module": {
+          "type": "string"
+        },
+        "export": {
+          "type": "string"
+        },
+        "sourceWorld": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WorldProcessorCapability"
+          }
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outputRoot": {
+          "type": "string"
+        },
+        "payloadFileNames": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "runtimePointerPath": {
+          "type": "string"
+        },
+        "auditOutputPath": {
+          "type": "string"
+        },
+        "applyOn": {
+          "$ref": "#/definitions/BlurConfigWorldProcessorApplyOnFile"
+        }
+      },
+      "required": ["id", "module", "sourceWorld"],
+      "additionalProperties": false,
+      "description": "Trusted project processor that derives artifacts or staged world mutations."
+    },
+    "WorldProcessorCapability": {
+      "type": "string",
+      "enum": ["observer", "artifact", "transform"]
+    },
+    "BlurConfigWorldProcessorApplyOnFile": {
+      "type": "object",
+      "properties": {
+        "dev": {
+          "type": "boolean"
+        },
+        "build": {
+          "type": "boolean"
+        },
+        "package": {
+          "type": "boolean"
+        },
+        "check": {
+          "type": "boolean"
+        },
+        "worldBuild": {
+          "type": "boolean"
+        },
+        "worldPush": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$id": "https://blurengine.dev/schema/blr.config.schema.json",

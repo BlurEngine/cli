@@ -19,6 +19,7 @@ import {
     capturePermissionsFromBds,
     ensureBds,
     prefetchBdsArchive,
+    replaceRuntimeWorldFromProjectSource,
     replaceBdsServerDirectory,
     resolveBdsOutputRelayMode,
 } from "../src/bds.js";
@@ -797,6 +798,69 @@ test("bootstrapProjectWorldSourceFromBds waits when neither a valid project sour
     assert.equal(
         await pathExists(path.join(worldSourceDirectory, "db")),
         false,
+    );
+});
+
+test("runtime world replacement consumes an explicit processed input without reading the authored source", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-bds-processed-input-",
+    );
+    const authored = path.join(projectRoot, "worlds", "Bedrock level");
+    const processed = path.join(projectRoot, ".blr", "processed", "world");
+    const runtime = path.join(
+        projectRoot,
+        ".blr",
+        "server",
+        "worlds",
+        "Bedrock level",
+    );
+    await mkdir(path.join(authored, "db"), { recursive: true });
+    await mkdir(path.join(processed, "db"), { recursive: true });
+    await mkdir(path.join(runtime, "db"), { recursive: true });
+    await writeFile(path.join(authored, "levelname.txt"), "authored");
+    await writeFile(path.join(processed, "levelname.txt"), "processed");
+    await writeFile(path.join(runtime, "levelname.txt"), "old-runtime");
+
+    await replaceRuntimeWorldFromProjectSource(
+        projectRoot,
+        {} as never,
+        {
+            channel: "stable",
+            version: "1.26.3.1",
+            platform: "win",
+            cacheDirectory: path.join(projectRoot, ".blr", "cache"),
+            serverDirectory: path.join(projectRoot, ".blr", "server"),
+            worldName: "Bedrock level",
+            worldSourcePath: "worlds/Bedrock level",
+            worldDirectory: runtime,
+            worldSourceDirectory: authored,
+            executablePath: path.join(
+                projectRoot,
+                ".blr",
+                "server",
+                "bedrock_server.exe",
+            ),
+            zipPath: path.join(projectRoot, ".blr", "cache", "server.zip"),
+            customExecutableInjected: false,
+        },
+        {
+            worldInput: {
+                kind: "processed",
+                worldName: "Bedrock level",
+                directory: processed,
+                seedIdentity: "processed:abc123",
+            },
+        },
+    );
+
+    assert.equal(
+        await readFile(path.join(runtime, "levelname.txt"), "utf8"),
+        "processed",
+    );
+    assert.equal(
+        await readFile(path.join(authored, "levelname.txt"), "utf8"),
+        "authored",
     );
 });
 

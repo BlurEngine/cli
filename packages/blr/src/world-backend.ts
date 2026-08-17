@@ -33,9 +33,11 @@ import {
 } from "./project-world-state.js";
 import {
     markProjectWorldMaterializedFromRemote,
+    markProcessedWorldPublished,
     readMaterializedProjectWorldRemoteState,
+    readProcessedWorldPublicationState,
 } from "./world-internal-state.js";
-import type { BlurProject } from "./types.js";
+import type { BlurProject, WorldPushPolicy } from "./types.js";
 import { getCliPackageVersion } from "./utils.js";
 import {
     assertValidProjectWorldSource,
@@ -67,12 +69,14 @@ type RemoteLockSnapshot = {
     etag?: string;
 };
 
-type AcquiredWorldLock = {
+export type AcquiredWorldLock = {
+    worldName: string;
     lock: WorldLockRecord;
     releaseOnFailure: boolean;
 };
 
 type ResolvedWorldS3Context = {
+    channel: WorldPushPolicy;
     worldName: string;
     worldSourcePath: string;
     worldSourceDirectory: string;
@@ -111,6 +115,10 @@ type PushWorldOptions = {
     reason?: string;
     allowRemoteConflict?: boolean;
     debug?: DebugLogger;
+    channel?: WorldPushPolicy;
+    worldInputDirectory?: string;
+    worldBuildId?: string;
+    acquiredLock?: AcquiredWorldLock;
 };
 
 type ReleaseWorldLockOptions = {
@@ -176,6 +184,9 @@ export type PushWorldResult = {
     context: ResolvedWorldS3Context;
     versioning: WorldVersioningStatus;
     versionId?: string;
+    channel: WorldPushPolicy;
+    inputDirectory: string;
+    worldBuildId?: string;
 };
 
 export type PullWorldResult = {
@@ -267,6 +278,8 @@ const WORLD_OBJECT_METADATA_KEYS = {
     cliVersion: "blr-cli-version",
     projectName: "blr-project-name",
     packageName: "blr-package-name",
+    channel: "blr-world-channel",
+    worldBuildId: "blr-world-build-id",
 } as const;
 
 function toObjectKeySegment(value: string, fallback: string): string {
@@ -591,6 +604,8 @@ function createWorldObjectMetadata(input: {
     packageName: string;
     cliVersion: string;
     reason?: string;
+    channel?: WorldPushPolicy;
+    worldBuildId?: string;
 }): Record<string, string> {
     const metadata: Record<string, string> = {
         [WORLD_OBJECT_METADATA_KEYS.actor]: `${input.actor.userName}@${input.actor.hostName}`,
@@ -602,6 +617,12 @@ function createWorldObjectMetadata(input: {
     const trimmedReason = input.reason?.trim();
     if (trimmedReason) {
         metadata[WORLD_OBJECT_METADATA_KEYS.reason] = trimmedReason;
+    }
+    if (input.channel) {
+        metadata[WORLD_OBJECT_METADATA_KEYS.channel] = input.channel;
+    }
+    if (input.worldBuildId) {
+        metadata[WORLD_OBJECT_METADATA_KEYS.worldBuildId] = input.worldBuildId;
     }
     return metadata;
 }
@@ -644,6 +665,26 @@ function resolveTrackedWorldBinding(
     };
 }
 
+async function readProcessedWorldBinding(
+    projectRoot: string,
+    context: ResolvedWorldS3Context,
+): Promise<TrackedWorldBinding> {
+    const published = await readProcessedWorldPublicationState(
+        projectRoot,
+        context.worldName,
+    );
+    return resolveTrackedWorldBinding(
+        context,
+        published
+            ? {
+                  name: context.worldName,
+                  remoteFingerprint: published.remoteFingerprint,
+                  versionId: published.versionId,
+              }
+            : undefined,
+    );
+}
+
 function createS3ClientForWorld(config: BlurProject): S3Client {
     const region =
         config.world.s3.region.trim() ||
@@ -661,6 +702,7 @@ function resolveWorldS3Context(
     projectRoot: string,
     config: BlurProject,
     worldName: string,
+    channel: WorldPushPolicy = "authored",
 ): ResolvedWorldS3Context {
     requireS3WorldBackend(config);
 
@@ -690,6 +732,7 @@ function resolveWorldS3Context(
         "worlds",
         toCacheSegment(config.world.s3.bucket.trim(), "bucket"),
         toCacheSegment(worldSegment, "world"),
+        channel,
     );
     const legacyCacheDirectory = path.resolve(
         projectRoot,
@@ -706,6 +749,7 @@ function resolveWorldS3Context(
     );
 
     return {
+        channel,
         worldName,
         worldSourcePath,
         worldSourceDirectory,
@@ -718,7 +762,11 @@ function resolveWorldS3Context(
         keyNamespace,
         projectPrefix: config.world.s3.projectPrefix,
         forcePathStyle: config.world.s3.forcePathStyle,
-        objectKey: joinObjectKey(keyNamespace, objectFileName),
+        objectKey: joinObjectKey(
+            keyNamespace,
+            channel === "processed" ? "processed" : undefined,
+            objectFileName,
+        ),
         lockKey: joinObjectKey(keyNamespace, lockFileName),
     };
 }
@@ -1379,6 +1427,7 @@ export async function acquireRemoteWorldLock(
         expiresAt: lock.expiresAt,
     });
     return {
+        worldName,
         lock,
         releaseOnFailure,
     };
@@ -1588,27 +1637,55 @@ export async function pushWorldToS3(
     worldName: string,
     options: PushWorldOptions = {},
 ): Promise<PushWorldResult> {
-    const context = resolveWorldS3Context(projectRoot, config, worldName);
-    const client = createS3ClientForWorld(config);
-    const versioning = await resolveWorldVersioningStatus(client, context);
-    assertWorldVersioningAvailable(versioning);
-    await assertValidProjectWorldSource(
-        projectRoot,
-        context.worldSourcePath,
-        `push world "${worldName}"`,
-    );
-
-    const lockHandle = await acquireRemoteWorldLock(
+    const channel = options.channel ?? "authored";
+    const context = resolveWorldS3Context(
         projectRoot,
         config,
         worldName,
-        {
-            command: "push",
+        channel,
+    );
+    const client = createS3ClientForWorld(config);
+    const versioning = await resolveWorldVersioningStatus(client, context);
+    assertWorldVersioningAvailable(versioning);
+    let inputDirectory: string;
+    if (channel === "processed") {
+        if (!options.worldInputDirectory || !options.worldBuildId) {
+            throw new Error(
+                `Processed world push for "${worldName}" requires an exact verified world build input and build id.`,
+            );
+        }
+        inputDirectory = path.resolve(options.worldInputDirectory);
+        if (!(await exists(path.join(inputDirectory, "db")))) {
+            throw new Error(
+                `Processed world build ${options.worldBuildId} is missing its db directory at ${inputDirectory}.`,
+            );
+        }
+        if (inputDirectory === path.resolve(context.worldSourceDirectory)) {
+            throw new Error(
+                "A processed world push cannot alias the authored source directory.",
+            );
+        }
+    } else {
+        inputDirectory = await assertValidProjectWorldSource(
+            projectRoot,
+            context.worldSourcePath,
+            `push world "${worldName}"`,
+        );
+    }
+
+    const lockHandle =
+        options.acquiredLock ??
+        (await acquireRemoteWorldLock(projectRoot, config, worldName, {
+            command: channel === "processed" ? "push-processed" : "push",
             force: options.forceLock,
             reason: options.reason,
             debug: options.debug,
-        },
-    );
+        }));
+    if (lockHandle.worldName !== worldName) {
+        throw new Error(
+            `Remote lock for ${lockHandle.worldName} cannot publish ${worldName}.`,
+        );
+    }
     let shouldReleaseLock = true;
 
     const archivePath = resolveTemporaryWorldArchivePath(context);
@@ -1616,7 +1693,9 @@ export async function pushWorldToS3(
     try {
         const [latestRemote, tracked] = await Promise.all([
             readRemoteWorldObjectMetadata(client, context),
-            readTrackedWorldBinding(projectRoot, context),
+            channel === "processed"
+                ? readProcessedWorldBinding(projectRoot, context)
+                : readTrackedWorldBinding(projectRoot, context),
         ]);
 
         if (!options.allowRemoteConflict) {
@@ -1627,7 +1706,7 @@ export async function pushWorldToS3(
             });
         }
 
-        await createWorldArchive(context.worldSourceDirectory, archivePath);
+        await createWorldArchive(inputDirectory, archivePath);
         const payload = await readFile(archivePath);
         const response = await client.send(
             new PutObjectCommand({
@@ -1641,6 +1720,8 @@ export async function pushWorldToS3(
                     packageName: config.project.packageName,
                     cliVersion: lockHandle.lock.cliVersion,
                     reason: options.reason ?? lockHandle.lock.reason,
+                    channel,
+                    worldBuildId: options.worldBuildId,
                 }),
             }),
         );
@@ -1650,26 +1731,38 @@ export async function pushWorldToS3(
             );
         }
 
-        await persistTrackedProjectWorldState(projectRoot, context, {
-            versionId: response.VersionId,
+        const remoteFingerprint = buildTrackedProjectWorldFingerprint({
+            backend: "s3",
+            bucket: context.bucket,
+            endpoint: context.endpoint,
+            objectKey: context.objectKey,
         });
-        await markProjectWorldMaterializedFromRemote(projectRoot, {
-            worldName,
-            remoteFingerprint: buildTrackedProjectWorldFingerprint({
-                backend: "s3",
-                bucket: context.bucket,
-                endpoint: context.endpoint,
-                objectKey: context.objectKey,
-            }),
-            versionId: response.VersionId,
-        });
+        if (channel === "processed") {
+            await markProcessedWorldPublished(projectRoot, {
+                worldName,
+                remoteFingerprint,
+                versionId: response.VersionId,
+                worldBuildId: options.worldBuildId!,
+            });
+        } else {
+            await persistTrackedProjectWorldState(projectRoot, context, {
+                versionId: response.VersionId,
+            });
+            await markProjectWorldMaterializedFromRemote(projectRoot, {
+                worldName,
+                remoteFingerprint,
+                versionId: response.VersionId,
+            });
+        }
         options.debug?.log("world", "pushed world to s3", {
             worldName,
             bucket: context.bucket,
             objectKey: context.objectKey,
             versionId: response.VersionId,
             archivePath,
-            worldSourceDirectory: context.worldSourceDirectory,
+            channel,
+            inputDirectory,
+            worldBuildId: options.worldBuildId,
         });
         await removeDirectory(archivePath);
         await pruneWorldCacheDirectory(context);
@@ -1686,6 +1779,11 @@ export async function pushWorldToS3(
             context,
             versioning,
             versionId: response.VersionId,
+            channel,
+            inputDirectory,
+            ...(options.worldBuildId
+                ? { worldBuildId: options.worldBuildId }
+                : {}),
         };
     } catch (error) {
         if (shouldReleaseLock && lockHandle.releaseOnFailure) {

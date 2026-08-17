@@ -18,6 +18,7 @@ import {
 } from "./helpers.js";
 
 type PackageJsonShape = {
+    scripts?: Record<string, string>;
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
     engines?: {
@@ -78,6 +79,14 @@ test("built cli create scaffolds a scripting project with bebe enabled by defaul
     );
     assert.ok(packageJson.devDependencies?.["@blurengine/cli"]);
     assert.equal(packageJson.engines?.node, ">=22.12.0");
+    assert.equal(
+        packageJson.scripts?.["assets:check"],
+        "blr world build --check",
+    );
+    assert.equal(
+        packageJson.scripts?.check,
+        "npm run assets:check && blr build",
+    );
     assert.match(mainFile, /import \{ Context \} from "@blurengine\/bebe";/);
     assert.match(mainFile, /const ctx = new Context\(\);/);
     assert.equal(

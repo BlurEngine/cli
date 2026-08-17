@@ -7,6 +7,7 @@ This is the canonical reference set for the `blr` tool and the projects it gener
 - [Command Reference](./reference/commands.md)
 - [Config Reference](./reference/config.md)
 - [Generated Project Reference](./reference/generated-project.md)
+- [World Processing](./reference/world-processing.md)
 
 ## Standards
 
@@ -26,6 +27,7 @@ These docs cover:
 - machine-local overrides via environment variables and CLI flags
 - generated project files and optional state files
 - staged build output and packaged artifacts under `dist/`
+- immutable world observations, derived artifacts, and verified processed worlds
 - shared Bedrock engineering standards used by generated projects
 
 ## Maintenance

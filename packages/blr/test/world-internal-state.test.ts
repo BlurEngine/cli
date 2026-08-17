@@ -6,8 +6,10 @@ import {
     clearLocalServerSession,
     clearRuntimeWorldSeedState,
     markProjectWorldMaterializedFromRemote,
+    markProcessedWorldPublished,
     readActiveLocalServerSession,
     readMaterializedProjectWorldRemoteState,
+    readProcessedWorldPublicationState,
     readRuntimeWorldSeedState,
     writeLocalServerSession,
     writeRuntimeWorldSeedState,
@@ -95,6 +97,37 @@ test("clearRuntimeWorldSeedState keeps the materialized project world pin intact
     );
     assert.equal(
         await readRuntimeWorldSeedState(projectRoot, "Bedrock level"),
+        undefined,
+    );
+});
+
+test("processed publication lineage is independent from authored materialization state", async (t) => {
+    const projectRoot = await createTempDirectory(
+        t,
+        "blr-world-state-processed-",
+    );
+    await markProcessedWorldPublished(projectRoot, {
+        worldName: "Bedrock level",
+        remoteFingerprint: "sha256:processed-remote",
+        versionId: "ver-processed",
+        worldBuildId: "build-123",
+        publishedAt: "2026-08-11T12:00:00.000Z",
+    });
+
+    assert.deepEqual(
+        await readProcessedWorldPublicationState(projectRoot, "Bedrock level"),
+        {
+            remoteFingerprint: "sha256:processed-remote",
+            versionId: "ver-processed",
+            worldBuildId: "build-123",
+            publishedAt: "2026-08-11T12:00:00.000Z",
+        },
+    );
+    assert.equal(
+        await readMaterializedProjectWorldRemoteState(
+            projectRoot,
+            "Bedrock level",
+        ),
         undefined,
     );
 });

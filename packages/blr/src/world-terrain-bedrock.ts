@@ -1,5 +1,4 @@
 import { LevelDB } from "@8crafter/leveldb-zlib";
-import NBT from "prismarine-nbt";
 import {
     loadMcbeLeveldbHelpers,
     type BiomePalette,
@@ -12,6 +11,10 @@ import {
     type WorldImageDimension,
 } from "./world-image-dimension.js";
 import { readRawBedrockData3dHeightMap } from "./world-image-bedrock.js";
+import {
+    decodeBedrockSubchunk,
+    type DecodedBedrockSubchunkLayer,
+} from "./world-processing/bedrock-subchunk.js";
 
 export type WorldTerrainColumn = {
     x: number;
@@ -235,171 +238,18 @@ type TerrainChunkAccumulator = {
     coveredColumns: number;
 };
 
-type SubChunkLayer = {
-    palette?: {
-        value?: Record<
-            string,
-            {
-                value?: {
-                    name?: {
-                        value?: unknown;
-                    };
-                };
-            }
-        >;
-    };
-    block_indices?: {
-        value?: {
-            value?: number[];
-        };
-    };
-    packed?: {
-        data: Buffer;
-        blockDataOffset: number;
-        bitsPerBlock: number;
-        blocksPerWord: number;
-        blockNames: string[];
-        hasNonAir: boolean;
-    };
-};
-
-type NbtParseResult = {
-    parsed: unknown;
-    metadata: {
-        size: number;
-    };
-};
+type SubChunkLayer = DecodedBedrockSubchunkLayer;
 
 async function parseSubchunkLayers(
     rawValue: Buffer,
-    helpers: McbeLeveldbHelpers,
+    _helpers: McbeLeveldbHelpers,
+    subChunkY: number,
 ): Promise<SubChunkLayer[] | undefined> {
-    try {
-        return await parsePackedSubchunkLayers(rawValue);
-    } catch (error) {
-        if (!isUnsupportedPackedSubchunkVersionError(error)) {
-            throw error;
-        }
-    }
-
-    try {
-        const parsed =
-            await helpers.entryContentTypeToFormatMap.SubChunkPrefix.parse(
-                rawValue,
-            );
-        return getLayers(parsed);
-    } catch (error) {
-        if (!isUnsupportedPackedStorageVersionError(error)) {
-            throw error;
-        }
-        return parsePackedSubchunkLayers(rawValue);
-    }
-}
-
-function isUnsupportedPackedStorageVersionError(error: unknown): boolean {
-    return (
-        error instanceof Error &&
-        /^Unknown storage version: (10|12)$/.test(error.message)
-    );
-}
-
-function isUnsupportedPackedSubchunkVersionError(error: unknown): boolean {
-    return (
-        error instanceof Error &&
-        /^Unsupported packed SubChunkPrefix version: /.test(error.message)
-    );
-}
-
-async function parsePackedSubchunkLayers(
-    data: Buffer,
-): Promise<SubChunkLayer[]> {
-    let currentOffset = 0;
-    const version = data[currentOffset++];
-    if (version !== 0x01 && version !== 0x08 && version !== 0x09) {
-        throw new Error(
-            `Unsupported packed SubChunkPrefix version: ${String(version)}`,
-        );
-    }
-
-    const layerCount = version === 0x01 ? 1 : data[currentOffset++];
-    if (version >= 0x09) {
-        currentOffset += 1;
-    }
-    if (typeof layerCount !== "number") {
-        throw new Error("SubChunkPrefix is missing a storage layer count.");
-    }
-
-    const layers: SubChunkLayer[] = [];
-    for (let layerIndex = 0; layerIndex < layerCount; layerIndex += 1) {
-        const storageVersion = data[currentOffset++];
-        if (typeof storageVersion !== "number") {
-            throw new Error("SubChunkPrefix is missing a storage version.");
-        }
-        const bitsPerBlock = storageVersion >> 1;
-        if (bitsPerBlock <= 0 || bitsPerBlock > 16) {
-            throw new Error(
-                `Unsupported packed SubChunkPrefix bits per block: ${bitsPerBlock}.`,
-            );
-        }
-
-        const blocksPerWord = Math.floor(32 / bitsPerBlock);
-        const wordCount = Math.ceil(4096 / blocksPerWord);
-        const blockDataOffset = currentOffset;
-        currentOffset += wordCount * 4;
-        if (currentOffset + 4 > data.length) {
-            throw new Error("SubChunkPrefix block data is truncated.");
-        }
-
-        const paletteSize = data.readInt32LE(currentOffset);
-        currentOffset += 4;
-        if (paletteSize < 0) {
-            throw new Error(
-                `SubChunkPrefix palette size is invalid: ${paletteSize}.`,
-            );
-        }
-
-        const blockNames: string[] = [];
-
-        for (
-            let paletteIndex = 0;
-            paletteIndex < paletteSize;
-            paletteIndex += 1
-        ) {
-            const fastEntry = readBedrockPaletteEntryBlockName(
-                data,
-                currentOffset,
-            );
-            if (fastEntry) {
-                currentOffset += fastEntry.size;
-                blockNames[paletteIndex] = fastEntry.blockName;
-            } else {
-                const result = (await NBT.parse(
-                    data.subarray(currentOffset),
-                    "little",
-                )) as NbtParseResult;
-                if (result.metadata.size <= 0) {
-                    throw new Error("SubChunkPrefix palette entry is invalid.");
-                }
-                currentOffset += result.metadata.size;
-                blockNames[paletteIndex] = getPaletteBlockName(result.parsed);
-            }
-        }
-
-        layers.push({
-            packed: {
-                data,
-                blockDataOffset,
-                bitsPerBlock,
-                blocksPerWord,
-                blockNames,
-                hasNonAir: blockNames.some(
-                    (blockName) => blockName !== "minecraft:air",
-                ),
-            },
-        });
-    }
-
-    return layers;
+    const decoded = await decodeBedrockSubchunk(rawValue, {
+        allowedFormatVersions: [1, 8, 9],
+        subChunkY,
+    });
+    return [...decoded.layers];
 }
 
 type TerrainColumnsBuilder = {
@@ -559,6 +409,7 @@ async function finalizeTerrainChunk(
             const layers = await parseSubchunkLayers(
                 subchunk.rawValue,
                 helpers,
+                subchunk.subChunkY,
             );
             if (!layers) {
                 parseErrors += 1;
@@ -604,17 +455,7 @@ function mergeSubchunkIntoTerrainChunk(
 }
 
 function isAirOnlyLayer(layer: SubChunkLayer): boolean {
-    if (layer.packed) {
-        return !layer.packed.hasNonAir;
-    }
-    const palette = layer.palette?.value;
-    if (!palette) {
-        return false;
-    }
-    return Object.values(palette).every((block) => {
-        const name = block?.value?.name?.value;
-        return typeof name !== "string" || name === "minecraft:air";
-    });
+    return layer.palette.every((entry) => entry.typeId === "minecraft:air");
 }
 
 function createChunkColumnIndex(localX: number, localZ: number): number {
@@ -781,219 +622,9 @@ function getBlockNameAt(
 ): string {
     const blockIndex = createSubchunkBlockIndex(localX, localY, localZ);
     for (const layer of layers) {
-        if (layer.packed) {
-            const blockName = getPackedLayerBlockName(layer.packed, blockIndex);
-            if (blockName !== "minecraft:air") {
-                return blockName;
-            }
-            continue;
-        }
-        const paletteIndex = layer.block_indices?.value?.value?.[blockIndex];
-        if (typeof paletteIndex !== "number") {
-            continue;
-        }
-        const block = layer.palette?.value?.[String(paletteIndex)];
-        const name = block?.value?.name?.value;
-        if (typeof name === "string" && name !== "minecraft:air") {
-            return name;
-        }
+        const paletteIndex = layer.indices[blockIndex];
+        const name = layer.palette[paletteIndex ?? 0]?.typeId;
+        if (name && name !== "minecraft:air") return name;
     }
     return "minecraft:air";
-}
-
-function getPackedLayerBlockName(
-    layer: NonNullable<SubChunkLayer["packed"]>,
-    blockIndex: number,
-): string {
-    if (!layer.hasNonAir) {
-        return "minecraft:air";
-    }
-    const word = layer.data.readUInt32LE(
-        layer.blockDataOffset +
-            Math.floor(blockIndex / layer.blocksPerWord) * 4,
-    );
-    const shift = (blockIndex % layer.blocksPerWord) * layer.bitsPerBlock;
-    const paletteIndex = (word >>> shift) & ((1 << layer.bitsPerBlock) - 1);
-    return layer.blockNames[paletteIndex] ?? "minecraft:air";
-}
-
-const NBT_TAG_END = 0;
-const NBT_TAG_BYTE = 1;
-const NBT_TAG_SHORT = 2;
-const NBT_TAG_INT = 3;
-const NBT_TAG_LONG = 4;
-const NBT_TAG_FLOAT = 5;
-const NBT_TAG_DOUBLE = 6;
-const NBT_TAG_BYTE_ARRAY = 7;
-const NBT_TAG_STRING = 8;
-const NBT_TAG_LIST = 9;
-const NBT_TAG_COMPOUND = 10;
-const NBT_TAG_INT_ARRAY = 11;
-const NBT_TAG_LONG_ARRAY = 12;
-
-type NbtReader = {
-    data: Buffer;
-    offset: number;
-};
-
-function readBedrockPaletteEntryBlockName(
-    data: Buffer,
-    offset: number,
-): { blockName: string; size: number } | undefined {
-    const reader: NbtReader = { data, offset };
-    try {
-        const rootType = readNbtUnsignedByte(reader);
-        if (rootType !== NBT_TAG_COMPOUND) {
-            return undefined;
-        }
-        readNbtString(reader);
-
-        let blockName: string | undefined;
-        while (true) {
-            const tagType = readNbtUnsignedByte(reader);
-            if (tagType === NBT_TAG_END) {
-                break;
-            }
-            const tagName = readNbtString(reader);
-            if (tagType === NBT_TAG_STRING && tagName === "name") {
-                blockName = readNbtString(reader);
-            } else {
-                skipNbtPayload(reader, tagType);
-            }
-        }
-
-        const size = reader.offset - offset;
-        return size > 0
-            ? { blockName: blockName ?? "minecraft:air", size }
-            : undefined;
-    } catch {
-        return undefined;
-    }
-}
-
-function readNbtUnsignedByte(reader: NbtReader): number {
-    ensureNbtBytes(reader, 1);
-    const value = reader.data.readUInt8(reader.offset);
-    reader.offset += 1;
-    return value;
-}
-
-function readNbtInt(reader: NbtReader): number {
-    ensureNbtBytes(reader, 4);
-    const value = reader.data.readInt32LE(reader.offset);
-    reader.offset += 4;
-    return value;
-}
-
-function readNbtString(reader: NbtReader): string {
-    ensureNbtBytes(reader, 2);
-    const length = reader.data.readUInt16LE(reader.offset);
-    reader.offset += 2;
-    ensureNbtBytes(reader, length);
-    const value = reader.data.toString(
-        "utf8",
-        reader.offset,
-        reader.offset + length,
-    );
-    reader.offset += length;
-    return value;
-}
-
-function skipNbtBytes(reader: NbtReader, count: number): void {
-    if (!Number.isInteger(count) || count < 0) {
-        throw new Error("NBT payload length is invalid.");
-    }
-    ensureNbtBytes(reader, count);
-    reader.offset += count;
-}
-
-function skipNbtPayload(reader: NbtReader, tagType: number): void {
-    switch (tagType) {
-        case NBT_TAG_BYTE:
-            skipNbtBytes(reader, 1);
-            return;
-        case NBT_TAG_SHORT:
-            skipNbtBytes(reader, 2);
-            return;
-        case NBT_TAG_INT:
-        case NBT_TAG_FLOAT:
-            skipNbtBytes(reader, 4);
-            return;
-        case NBT_TAG_LONG:
-        case NBT_TAG_DOUBLE:
-            skipNbtBytes(reader, 8);
-            return;
-        case NBT_TAG_BYTE_ARRAY:
-            skipNbtBytes(reader, readNbtInt(reader));
-            return;
-        case NBT_TAG_STRING:
-            readNbtString(reader);
-            return;
-        case NBT_TAG_LIST: {
-            const childType = readNbtUnsignedByte(reader);
-            const length = readNbtInt(reader);
-            for (let index = 0; index < length; index += 1) {
-                skipNbtPayload(reader, childType);
-            }
-            return;
-        }
-        case NBT_TAG_COMPOUND:
-            skipNbtCompoundPayload(reader);
-            return;
-        case NBT_TAG_INT_ARRAY:
-            skipNbtBytes(reader, readNbtInt(reader) * 4);
-            return;
-        case NBT_TAG_LONG_ARRAY:
-            skipNbtBytes(reader, readNbtInt(reader) * 8);
-            return;
-        default:
-            throw new Error(`Unsupported NBT tag type ${String(tagType)}.`);
-    }
-}
-
-function skipNbtCompoundPayload(reader: NbtReader): void {
-    while (true) {
-        const tagType = readNbtUnsignedByte(reader);
-        if (tagType === NBT_TAG_END) {
-            return;
-        }
-        readNbtString(reader);
-        skipNbtPayload(reader, tagType);
-    }
-}
-
-function ensureNbtBytes(reader: NbtReader, count: number): void {
-    if (reader.offset + count > reader.data.length) {
-        throw new Error("NBT payload is truncated.");
-    }
-}
-
-function getPaletteBlockName(parsed: unknown): string {
-    const name = (
-        parsed as {
-            value?: {
-                name?: {
-                    value?: unknown;
-                };
-            };
-        }
-    )?.value?.name?.value;
-    return typeof name === "string" ? name : "minecraft:air";
-}
-
-function getLayers(parsed: unknown): SubChunkLayer[] | undefined {
-    const layers = (parsed as { value?: { layers?: unknown } } | undefined)
-        ?.value?.layers;
-    if (
-        typeof layers !== "object" ||
-        !layers ||
-        !("value" in layers) ||
-        typeof layers.value !== "object" ||
-        !layers.value ||
-        !("value" in layers.value) ||
-        !Array.isArray(layers.value.value)
-    ) {
-        return undefined;
-    }
-    return layers.value.value as SubChunkLayer[];
 }

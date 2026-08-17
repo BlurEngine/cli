@@ -56,7 +56,15 @@ import {
     pullWorldFromS3,
     type WorldStatus,
 } from "../world-backend.js";
-import { resolveSelectedWorld } from "../world.js";
+import {
+    resolveProjectWorldSourceDirectory,
+    resolveSelectedWorld,
+} from "../world.js";
+import {
+    buildProcessedWorld,
+    type ProcessedWorldBuildResult,
+} from "../world-processing/processor-build.js";
+import type { ResolvedWorldInput } from "../world-input.js";
 
 type DevCommandOptions = {
     localDeploy?: boolean;
@@ -175,9 +183,15 @@ type ProjectWatchChangeAction =
     | {
           kind: "reload";
           pipelineMode: "reload";
+      }
+    | {
+          kind: "restart";
+          pipelineMode: "restart";
+          reloadConfig: boolean;
       };
 type ProjectWatchChangeActionOptions = {
     readonly assetSourcePaths?: readonly string[];
+    readonly worldProcessorPaths?: readonly string[];
 };
 type WatchPlan = {
     patterns: string[];
@@ -218,6 +232,15 @@ export function resolveProjectWatchChangeAction(
 ): ProjectWatchChangeAction {
     const normalizedPath = normalizeWatchPath(targetPath).replace(/\/+$/, "");
 
+    const worldProcessorPaths = options.worldProcessorPaths ?? [];
+    if (normalizedPath === BLR_CONFIG_FILE && worldProcessorPaths.length > 0) {
+        return {
+            kind: "restart",
+            pipelineMode: "restart",
+            reloadConfig: true,
+        };
+    }
+
     if (normalizedPath === BLR_CONFIG_FILE) {
         return {
             kind: "ignore",
@@ -230,6 +253,20 @@ export function resolveProjectWatchChangeAction(
             kind: "ignore",
             message:
                 "[dev] change ignored: package.json. Restart dev to apply it.",
+        };
+    }
+
+    if (
+        worldProcessorPaths.some((pattern) =>
+            picomatch(normalizeWatchPath(pattern), { dot: true })(
+                normalizedPath,
+            ),
+        )
+    ) {
+        return {
+            kind: "restart",
+            pipelineMode: "restart",
+            reloadConfig: false,
         };
     }
 
@@ -331,6 +368,122 @@ export function createWatchPlan(patterns: readonly string[]): WatchPlan {
             return matchers.some((matcher) => matcher(normalizedTarget));
         },
     };
+}
+
+type DevWorldProcessorSummary = {
+    readonly id: string;
+    readonly sourceWorld: string;
+    readonly capabilities: readonly string[];
+    readonly applyOn: { readonly dev?: boolean };
+};
+
+/**
+ * Author mode may capture a runtime world back into its source. Processed play
+ * mode must never do that because its BDS world contains generated mutations.
+ */
+export function assertDevWorldProcessingCompatibility(options: {
+    readonly watchWorld: boolean;
+    readonly worldName: string;
+    readonly worldProcessors: readonly DevWorldProcessorSummary[];
+}): void {
+    if (!options.watchWorld) return;
+    const transforms = options.worldProcessors.filter(
+        (processor) =>
+            processor.sourceWorld === options.worldName &&
+            processor.applyOn.dev === true &&
+            processor.capabilities.includes("transform"),
+    );
+    if (transforms.length === 0) return;
+    throw new Error(
+        `Processed play mode for ${options.worldName} cannot be combined with watch-world because runtime capture would overwrite the authored world. Disable watch-world or disable the dev transform processors: ${transforms.map((processor) => processor.id).join(", ")}.`,
+    );
+}
+
+/** Builds an independent watcher for processor configuration and inputs. */
+export function createWorldProcessorWatchPlan(options: {
+    readonly worldSourcePath: string;
+    readonly processors: readonly {
+        readonly module: string;
+        readonly inputPaths: readonly string[];
+    }[];
+}): WatchPlan {
+    const patterns = new Set<string>([
+        BLR_CONFIG_FILE,
+        "worlds/worlds.json",
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "bun.lock",
+        "bun.lockb",
+    ]);
+    const worldPath = normalizeWatchPath(options.worldSourcePath).replace(
+        /\/+$/,
+        "",
+    );
+    if (worldPath.length > 0) patterns.add(`${worldPath}/**/*`);
+    for (const processor of options.processors) {
+        for (const inputPath of processor.inputPaths) {
+            const normalized = normalizeWatchPath(inputPath).replace(
+                /\/+$/,
+                "",
+            );
+            if (normalized.length > 0) {
+                patterns.add(normalized);
+                patterns.add(`${normalized}/**/*`);
+            }
+        }
+        if (!processor.module.startsWith("./")) continue;
+        const modulePath = normalizeWatchPath(processor.module.slice(2));
+        patterns.add(modulePath);
+        const lastSlash = modulePath.lastIndexOf("/");
+        const moduleDirectory =
+            lastSlash < 0 ? "." : modulePath.slice(0, lastSlash);
+        patterns.add(`${moduleDirectory}/**/*`);
+    }
+    return createWatchPlan([...patterns].sort());
+}
+
+function selectDevWorldProcessors(
+    config: Pick<BlurProject, "worldProcessors">,
+    worldName: string,
+) {
+    return config.worldProcessors.filter(
+        (processor) =>
+            processor.sourceWorld === worldName && processor.applyOn.dev,
+    );
+}
+
+function assertDevConfigChangeIsProcessorOnly(
+    previous: BlurProject,
+    next: BlurProject,
+): void {
+    const previousComparable = { ...previous, worldProcessors: [] };
+    const nextComparable = { ...next, worldProcessors: [] };
+    if (JSON.stringify(previousComparable) !== JSON.stringify(nextComparable)) {
+        throw new Error(
+            "blr.config.json changed outside worldProcessors while dev was running. Restart blr dev so the server, deploy, and watch controllers all use one configuration.",
+        );
+    }
+}
+
+function toProcessedWorldInput(
+    result: ProcessedWorldBuildResult,
+): ResolvedWorldInput {
+    return Object.freeze({
+        kind: "processed",
+        worldName: result.worldName,
+        directory: result.worldDirectory,
+        seedIdentity: `processed:${result.worldBuildId}`,
+    });
+}
+
+function isAbortError(error: unknown): boolean {
+    return (
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof Error && error.name === "AbortError")
+    );
 }
 
 function resolveFlag(
@@ -1704,6 +1857,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     );
     const debug = createDebugLogger(resolveDebugEnabled(options.debug));
     const selectedWorld = resolveSelectedWorld(config, options.world);
+    let activeProcessorConfig = config;
     const resolveCurrentMachine = () =>
         resolveMachineSettings(
             projectRoot,
@@ -2042,6 +2196,18 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
             },
         },
     );
+    let devWorldProcessors = selectDevWorldProcessors(
+        activeProcessorConfig,
+        selectedWorld.worldName,
+    );
+    let processedPlayMode = devWorldProcessors.some((processor) =>
+        processor.capabilities.includes("transform"),
+    );
+    assertDevWorldProcessingCompatibility({
+        watchWorld: resolved.watchWorld,
+        worldName: selectedWorld.worldName,
+        worldProcessors: devWorldProcessors,
+    });
     const machineSettings = machine ?? resolveCurrentMachine();
     machine = machineSettings;
     const bebeAssetWatchConfig = await resolveBebeAssetWatchConfig(projectRoot);
@@ -2058,9 +2224,14 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         normalizedWorldSourcePath.length > 0
             ? createWatchPlan([`${normalizedWorldSourcePath}/**/*`])
             : createWatchPlan([]);
+    let worldProcessorWatchPlan = createWorldProcessorWatchPlan({
+        worldSourcePath: selectedWorld.worldSourcePath,
+        processors: devWorldProcessors,
+    });
     debug.log("dev", "resolved dev command", {
         projectRoot,
         selectedWorld,
+        worldProcessorWatchPatterns: worldProcessorWatchPlan.patterns,
         bebeAssetSourcePaths,
         bebeAssetWatchPatterns: bebeAssetWatchConfig.watchPatterns,
         watchPaths: scriptWatchPlan.patterns,
@@ -2069,7 +2240,10 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         resolved,
     });
 
-    if (resolved.abortBeforeStart || !resolved.selectedAnyAction) {
+    if (
+        resolved.abortBeforeStart ||
+        (!resolved.selectedAnyAction && devWorldProcessors.length === 0)
+    ) {
         logDevExit(
             resolved.exitMessage ?? "No dev actions selected. Exiting.",
             resolved.exitIsError,
@@ -2160,7 +2334,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
           )
         : undefined;
 
-    if (runtimeState && resolved.watchWorld) {
+    if (runtimeState && resolved.watchWorld && !processedPlayMode) {
         const bootstrapResult = await bootstrapProjectWorldSourceFromBds(
             runtimeState,
             debug,
@@ -2185,7 +2359,7 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         }
     }
 
-    if (runtimeState) {
+    if (runtimeState && !processedPlayMode) {
         const runtimeDecision = await resolveRuntimeWorldDecision({
             projectRoot,
             config,
@@ -2244,11 +2418,17 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
     let shutdownPromise: Promise<void> | undefined;
     let detachLocalServerExit: (() => void) | undefined;
     let pendingMode: PipelineMode | undefined;
+    let pendingRunToken: number | undefined;
+    let pendingProcessorConfigReload = false;
+    let pendingProcessedWorldRebuild = false;
+    let nextRunToken = 0;
+    let activePipelineController: AbortController | undefined;
     let running = false;
     let runtimeWorldDirty = false;
     let allowlistCapturePending = false;
     let allowlistCaptureInFlight = false;
     let watchingAnnounced = false;
+    let currentProcessedWorldInput: ResolvedWorldInput | undefined;
 
     const announceWatching = () => {
         if (watchingAnnounced) {
@@ -2357,6 +2537,14 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 stopServer: options.stopServer !== false,
             });
             pendingMode = undefined;
+            pendingRunToken = undefined;
+            activePipelineController?.abort(
+                new DOMException(
+                    "Dev shutdown superseded world processing.",
+                    "AbortError",
+                ),
+            );
+            activePipelineController = undefined;
 
             if (debounceHandle) {
                 clearTimeout(debounceHandle);
@@ -2395,17 +2583,93 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         });
     }
 
-    const runPipeline = async (mode: PipelineMode) => {
+    const runPipeline = async (
+        mode: PipelineMode,
+        runToken: number,
+        options: {
+            reloadProcessorConfig: boolean;
+            rebuildProcessedWorld: boolean;
+        },
+    ) => {
         if (shuttingDown) {
             return;
         }
 
-        debug.log("dev", "running pipeline", { mode });
+        const controller = new AbortController();
+        activePipelineController = controller;
+        const isCurrent = () =>
+            !shuttingDown &&
+            !controller.signal.aborted &&
+            runToken === nextRunToken;
+        debug.log("dev", "running pipeline", { mode, runToken, ...options });
 
-        await buildProject(projectRoot, config, {
+        if (options.reloadProcessorConfig) {
+            const reloaded = await loadBlurConfig(projectRoot);
+            assertDevConfigChangeIsProcessorOnly(
+                activeProcessorConfig,
+                reloaded.config,
+            );
+            const nextProcessors = selectDevWorldProcessors(
+                reloaded.config,
+                selectedWorld.worldName,
+            );
+            const nextProcessedPlayMode = nextProcessors.some((processor) =>
+                processor.capabilities.includes("transform"),
+            );
+            if (nextProcessedPlayMode !== processedPlayMode) {
+                throw new Error(
+                    "Changing between author mode and processed play mode requires restarting blr dev.",
+                );
+            }
+            assertDevWorldProcessingCompatibility({
+                watchWorld: resolved.watchWorld,
+                worldName: selectedWorld.worldName,
+                worldProcessors: nextProcessors,
+            });
+            activeProcessorConfig = reloaded.config;
+            devWorldProcessors = nextProcessors;
+            processedPlayMode = nextProcessedPlayMode;
+            worldProcessorWatchPlan = createWorldProcessorWatchPlan({
+                worldSourcePath: selectedWorld.worldSourcePath,
+                processors: devWorldProcessors,
+            });
+        }
+
+        if (
+            processedPlayMode &&
+            (options.rebuildProcessedWorld || !currentProcessedWorldInput)
+        ) {
+            const processed = await buildProcessedWorld({
+                projectRoot,
+                worldName: selectedWorld.worldName,
+                sourceWorldDirectory: resolveProjectWorldSourceDirectory(
+                    projectRoot,
+                    selectedWorld.worldSourcePath,
+                ),
+                configs: activeProcessorConfig.worldProcessors,
+                pipeline: "dev",
+                mode: "bake",
+                signal: controller.signal,
+                isCurrent,
+            });
+            if (processed.status === "stale" || !isCurrent()) {
+                throw new DOMException(
+                    "A newer dev world-processing run superseded this one.",
+                    "AbortError",
+                );
+            }
+            currentProcessedWorldInput = toProcessedWorldInput(processed);
+        }
+
+        await buildProject(projectRoot, activeProcessorConfig, {
             production: resolved.production,
             debug,
             pipeline: "dev",
+            worldProcessing: {
+                enabled: !processedPlayMode,
+                signal: controller.signal,
+                isCurrent,
+            },
             link: linkServer
                 ? {
                       baseUrl: linkServer.url,
@@ -2415,6 +2679,12 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                       enabled: !resolved.localServer,
                   },
         });
+        if (!isCurrent()) {
+            throw new DOMException(
+                "A newer dev build superseded this one.",
+                "AbortError",
+            );
+        }
         console.log("[dev] build completed.");
 
         if (shuttingDown) {
@@ -2448,6 +2718,51 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                     "Waiting for local-server Bedrock download...",
                     { animate: false },
                 );
+            }
+
+            if (currentProcessedWorldInput) {
+                const lastSeed = await readRuntimeWorldSeedState(
+                    projectRoot,
+                    currentProcessedWorldInput.worldName,
+                );
+                const runtimeWorldExists = runtimeState
+                    ? Boolean(
+                          await stat(runtimeState.worldDirectory).catch(
+                              () => undefined,
+                          ),
+                      )
+                    : false;
+                const replaceProcessedWorld =
+                    !runtimeWorldExists ||
+                    lastSeed?.sourceIdentity !==
+                        currentProcessedWorldInput.seedIdentity;
+                const processedApplyMode: PipelineMode = replaceProcessedWorld
+                    ? "restart"
+                    : mode;
+                await waitForPromiseIfSlow(
+                    localServer.apply(processedApplyMode, {
+                        worldMode: replaceProcessedWorld
+                            ? "replace"
+                            : "preserve",
+                        requireWorldSource: replaceProcessedWorld,
+                        worldInput: replaceProcessedWorld
+                            ? currentProcessedWorldInput
+                            : undefined,
+                    }),
+                    "Preparing processed local-server world...",
+                    250,
+                    { animate: false },
+                );
+                if (replaceProcessedWorld) {
+                    await writeRuntimeWorldSeedState(projectRoot, {
+                        worldName: currentProcessedWorldInput.worldName,
+                        sourceIdentity: currentProcessedWorldInput.seedIdentity,
+                    });
+                }
+                console.log(
+                    `[dev] local-server ${replaceProcessedWorld ? "reseeded from the processed world" : processedApplyMode === "reload" ? "reloaded" : "synchronized"}.`,
+                );
+                return;
             }
 
             let localServerApplyMode: PipelineMode = mode;
@@ -2527,42 +2842,88 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         }
     };
 
-    const enqueue = async (mode: PipelineMode) => {
+    const enqueue = async (
+        mode: PipelineMode,
+        runToken: number,
+        options: {
+            reloadProcessorConfig?: boolean;
+            rebuildProcessedWorld?: boolean;
+        } = {},
+    ) => {
         if (shuttingDown) {
             return;
         }
 
         if (running) {
             pendingMode = mergePipelineModes(pendingMode, mode);
+            pendingRunToken = runToken;
+            pendingProcessorConfigReload ||= Boolean(
+                options.reloadProcessorConfig,
+            );
+            pendingProcessedWorldRebuild ||= Boolean(
+                options.rebuildProcessedWorld,
+            );
             debug.log("watch", "queued follow-up pipeline mode", {
                 requestedMode: mode,
                 pendingMode,
+                runToken,
             });
             return;
         }
 
         running = true;
         let nextMode: PipelineMode | undefined = mode;
+        let nextToken = runToken;
+        let nextReloadProcessorConfig = Boolean(options.reloadProcessorConfig);
+        let nextRebuildProcessedWorld = Boolean(options.rebuildProcessedWorld);
 
         while (nextMode && !shuttingDown) {
             pendingMode = undefined;
+            pendingRunToken = undefined;
+            pendingProcessorConfigReload = false;
+            pendingProcessedWorldRebuild = false;
             try {
-                await runPipeline(nextMode);
+                await runPipeline(nextMode, nextToken, {
+                    reloadProcessorConfig: nextReloadProcessorConfig,
+                    rebuildProcessedWorld: nextRebuildProcessedWorld,
+                });
             } catch (error) {
                 if (shuttingDown) {
                     break;
                 }
-                const message =
-                    error instanceof Error ? error.message : String(error);
-                console.error(`[dev] ${message}`);
+                if (isAbortError(error)) {
+                    debug.log("watch", "discarded superseded pipeline", {
+                        mode: nextMode,
+                        runToken: nextToken,
+                    });
+                } else {
+                    const message =
+                        error instanceof Error ? error.message : String(error);
+                    console.error(`[dev] ${message}`);
+                }
+            } finally {
+                if (
+                    activePipelineController?.signal.aborted ||
+                    nextToken === nextRunToken
+                ) {
+                    activePipelineController = undefined;
+                }
             }
             nextMode = shuttingDown ? undefined : pendingMode;
+            if (nextMode) {
+                nextToken = pendingRunToken ?? nextRunToken;
+                nextReloadProcessorConfig = pendingProcessorConfigReload;
+                nextRebuildProcessedWorld = pendingProcessedWorldRebuild;
+            }
         }
 
         running = false;
     };
 
-    await enqueue("start");
+    nextRunToken += 1;
+    await enqueue("start", nextRunToken, {
+        rebuildProcessedWorld: true,
+    });
 
     if (shuttingDown) {
         return;
@@ -2579,23 +2940,47 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         return;
     }
 
-    if (!hasActiveDevTargets(resolved)) {
+    if (!hasActiveDevTargets(resolved) && devWorldProcessors.length === 0) {
         await stopLinkServerIfLocalServerIsIdle();
         return;
     }
 
     const debounceMs = Math.max(25, config.dev.watch.debounceMs);
     let scheduledMode: PipelineMode | undefined;
+    let scheduledRunToken: number | undefined;
+    let scheduledProcessorConfigReload = false;
+    let scheduledProcessedWorldRebuild = false;
 
-    const schedule = (mode: PipelineMode) => {
+    const schedule = (
+        mode: PipelineMode,
+        options: {
+            reloadProcessorConfig?: boolean;
+            rebuildProcessedWorld?: boolean;
+        } = {},
+    ) => {
         if (shuttingDown) {
             return;
         }
 
+        nextRunToken += 1;
+        scheduledRunToken = nextRunToken;
         scheduledMode = mergePipelineModes(scheduledMode, mode);
+        scheduledProcessorConfigReload ||= Boolean(
+            options.reloadProcessorConfig,
+        );
+        scheduledProcessedWorldRebuild ||= Boolean(
+            options.rebuildProcessedWorld,
+        );
+        activePipelineController?.abort(
+            new DOMException(
+                "A newer watched change superseded this dev run.",
+                "AbortError",
+            ),
+        );
         debug.log("watch", "scheduled pipeline mode", {
             requestedMode: mode,
             scheduledMode,
+            scheduledRunToken,
             debounceMs,
         });
         if (debounceHandle) {
@@ -2603,8 +2988,17 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
         }
         debounceHandle = setTimeout(() => {
             const modeToRun = scheduledMode ?? "start";
+            const tokenToRun = scheduledRunToken ?? nextRunToken;
+            const reloadProcessorConfig = scheduledProcessorConfigReload;
+            const rebuildProcessedWorld = scheduledProcessedWorldRebuild;
             scheduledMode = undefined;
-            void enqueue(modeToRun);
+            scheduledRunToken = undefined;
+            scheduledProcessorConfigReload = false;
+            scheduledProcessedWorldRebuild = false;
+            void enqueue(modeToRun, tokenToRun, {
+                reloadProcessorConfig,
+                rebuildProcessedWorld,
+            });
         }, debounceMs);
     };
 
@@ -2693,6 +3087,50 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                 nextMode: watchAction.pipelineMode,
             });
             schedule(watchAction.pipelineMode);
+        });
+    }
+
+    if (devWorldProcessors.length > 0) {
+        const processorWatcher = chokidar.watch(".", {
+            cwd: projectRoot,
+            ignoreInitial: true,
+            atomic: true,
+            ignored: [
+                "**/.git/**",
+                "**/.blr/**",
+                "**/dist/**",
+                "**/node_modules/**",
+            ],
+        });
+        watchers.add(processorWatcher);
+        debug.log("watch", "armed world processor watcher", {
+            cwd: projectRoot,
+            patterns: worldProcessorWatchPlan.patterns,
+        });
+        processorWatcher.once("ready", () => {
+            announceWatching();
+            debug.log("watch", "world processor watcher ready");
+        });
+        processorWatcher.on("error", (error: unknown) => {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            console.error(`[dev] world processor watcher error: ${message}`);
+        });
+        processorWatcher.on("all", (eventName: string, targetPath: string) => {
+            if (shuttingDown) return;
+            const normalizedPath = normalizeWatchPath(targetPath);
+            if (!worldProcessorWatchPlan.matches(normalizedPath)) return;
+            const action = resolveProjectWatchChangeAction(normalizedPath, {
+                worldProcessorPaths: worldProcessorWatchPlan.patterns,
+            });
+            if (action.kind !== "restart") return;
+            console.log(
+                `[dev] world processor change detected: ${eventName} ${normalizedPath}`,
+            );
+            schedule("restart", {
+                reloadProcessorConfig: action.reloadConfig,
+                rebuildProcessedWorld: true,
+            });
         });
     }
 

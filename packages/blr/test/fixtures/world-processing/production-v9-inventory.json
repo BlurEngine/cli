@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "worldName": "Bedrock level",
+    "fingerprint": "sha256:b271e1224429cd53e2b746ffd69ccf3dcef3683dab5282184d979a458f2e6d12",
+    "version": "PtY4XXKBQtKWA9pb.P5A_FNX915RVkHE",
+    "auditDate": "2026-08-11",
+    "method": "Read-only LevelDB iteration over a verified disposable copy; every SubChunkPrefix layer header and every BlockEntity record was inspected."
+  },
+  "subchunks": {
+    "records": 1589465,
+    "formatVersions": {
+      "9": 1589465
+    },
+    "layerCounts": {
+      "1": 1589220,
+      "2": 245
+    },
+    "firstLayerHeaders": {
+      "2": 1579055,
+      "4": 4751,
+      "6": 2466,
+      "8": 1720,
+      "10": 917,
+      "12": 301,
+      "16": 255
+    },
+    "allLayerHeaders": {
+      "2": 1579300,
+      "4": 4751,
+      "6": 2466,
+      "8": 1720,
+      "10": 917,
+      "12": 301,
+      "16": 255
+    }
+  },
+  "blockEntities": {
+    "records": 66225,
+    "entities": 5730,
+    "signs": 1470,
+    "distinctFrontBackPairs": 79,
+    "distinctFaceTexts": 79
+  }
+}

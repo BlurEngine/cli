@@ -27,13 +27,28 @@ export type McbeLeveldbHelpers = {
     getChunkKeyIndices(key: Buffer): SubChunkIndexDimensionVectorXZ;
     generateChunkKeyFromIndices(
         indices: SubChunkIndexDimensionVectorXZ,
-        chunkKeyType: "Data3D" | "SubChunkPrefix",
+        chunkKeyType: "Data3D" | "SubChunkPrefix" | "BlockEntity",
     ): Buffer;
     getContentTypeFromDBKey(key: Buffer): string;
     getBiomeTypeFromID(id: number): string | undefined;
     entryContentTypeToFormatMap: {
         SubChunkPrefix: {
             parse(data: Buffer): Promise<unknown>;
+            serialize(data: unknown): Buffer;
+        };
+        BlockEntity: {
+            parse(data: Buffer): Promise<{
+                type: "compound";
+                value: {
+                    blockEntities: {
+                        type: "list";
+                        value: {
+                            type: "compound";
+                            value: Record<string, unknown>[];
+                        };
+                    };
+                };
+            }>;
             serialize(data: unknown): Buffer;
         };
     };
@@ -77,6 +92,27 @@ function assertSubChunkPrefixFormat(
     }
 }
 
+function assertBlockEntityFormat(
+    moduleName: string,
+    moduleValue: Record<string, unknown>,
+): void {
+    const formats = moduleValue.entryContentTypeToFormatMap;
+    const blockEntity =
+        formats && typeof formats === "object"
+            ? (formats as Record<string, Record<string, unknown> | undefined>)
+                  .BlockEntity
+            : undefined;
+    if (
+        !blockEntity ||
+        typeof blockEntity.parse !== "function" ||
+        typeof blockEntity.serialize !== "function"
+    ) {
+        throw new Error(
+            `${moduleName} did not provide the expected BlockEntity parse and serialize helpers.`,
+        );
+    }
+}
+
 async function loadHelpers(): Promise<McbeLeveldbHelpers> {
     const require = createRequire(import.meta.url);
     const modulePath = require.resolve("mcbe-leveldb");
@@ -92,8 +128,30 @@ async function loadHelpers(): Promise<McbeLeveldbHelpers> {
     assertFunction(moduleName, moduleValue, "getContentTypeFromDBKey");
     assertFunction(moduleName, moduleValue, "getBiomeTypeFromID");
     assertSubChunkPrefixFormat(moduleName, moduleValue);
+    assertBlockEntityFormat(moduleName, moduleValue);
 
-    return moduleValue as McbeLeveldbHelpers;
+    const helpers = moduleValue as McbeLeveldbHelpers;
+    return Object.freeze({
+        readData3dValue: helpers.readData3dValue,
+        writeData3DValue: helpers.writeData3DValue,
+        getChunkKeyIndices: helpers.getChunkKeyIndices,
+        generateChunkKeyFromIndices(
+            indices: Parameters<
+                McbeLeveldbHelpers["generateChunkKeyFromIndices"]
+            >[0],
+            chunkKeyType: Parameters<
+                McbeLeveldbHelpers["generateChunkKeyFromIndices"]
+            >[1],
+        ) {
+            return helpers.generateChunkKeyFromIndices(
+                { ...indices },
+                chunkKeyType,
+            );
+        },
+        getContentTypeFromDBKey: helpers.getContentTypeFromDBKey,
+        getBiomeTypeFromID: helpers.getBiomeTypeFromID,
+        entryContentTypeToFormatMap: helpers.entryContentTypeToFormatMap,
+    });
 }
 
 export function loadMcbeLeveldbHelpers(): Promise<McbeLeveldbHelpers> {

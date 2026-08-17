@@ -6,6 +6,7 @@
 - Generated projects run the installed binary through package-manager scripts, for example `npm run dev`, `pnpm run dev`, `yarn run dev`, or `bun run dev`
 - Generated projects also expose a `system` package script for support diagnostics
 - Generated projects also expose a `world` package script for world backend operations
+- Generated projects expose `assets:check` for a read-only world-processor freshness check
 
 Windows PowerShell note:
 
@@ -231,6 +232,7 @@ Build output:
 - generated project code should not import `@blurengine/bebe/tooling/*`; those Node-only build surfaces are resolved by `blr` when it bakes Bebe assets
 - dynamic Link usage such as assigning or destructuring `Link.event` or `Link.snapshot` fails the offline build with a clear error because `blr` cannot safely erase it
 - `local-deploy` consumes the offline staged behavior pack; `local-server` consumes the BDS staged behavior pack
+- configured artifact processors run before content staging; transform processors are validated but only materialise a world when a consuming workflow needs one
 
 Bebe integration:
 
@@ -541,6 +543,7 @@ Purpose:
 Remote object layout for the S3 backend:
 
 - `<keyPrefix>/<worldName>.zip`
+- `<keyPrefix>/processed/<worldName>.zip`
 - `<keyPrefix>/<worldName>.lock.json`
 
 Notes:
@@ -567,6 +570,36 @@ Notes:
 - internal runtime and materialization bookkeeping lives under `.blr/state/world-state.json`
 - generated projects ignore raw world contents by default but still allow `worlds/worlds.json` to be committed
 - if the remote fingerprint drifts, `blr` ignores the stale pin until the next successful remote world action refreshes it
+- authored and processed world publication use separate lineage state; processed output never replaces the authored project world
+
+### `blr world build`
+
+Runs the configured processor graph against an immutable snapshot and produces or verifies a content-addressed processed world.
+
+Syntax:
+
+```text
+blr world build [worldName]
+```
+
+Behavior:
+
+- never opens or modifies the authored world database
+- publishes configured immutable artifact sets and runtime pointers
+- applies declarative transform mutations only to a disposable staged copy
+- reopens and verifies the processed world before publishing its lineage
+- retains the previous coherent build after any failure or superseded run
+
+Flags:
+
+- `--check`: verify committed artifacts and the processed-world lineage without project or cache writes
+- `--dry-run`: alias for `--check`
+- `--processor <id...>`: narrow the run to named processors plus dependencies
+- `--audit`: write configured audit reports after a successful build
+- `--output <path>`: copy the verified world to a new explicit directory
+- `--json`: emit the result as JSON
+
+See [World Processing](./world-processing.md) for the processor and mutation contracts.
 
 ### `blr world list`
 
@@ -974,5 +1007,8 @@ Generated projects expose these scripts:
 - `<packageManager> run minecraft -- <subcommand>` -> `blr minecraft <subcommand>`
 - `<packageManager> run system -- <subcommand>` -> `blr system <subcommand>`
 - `<packageManager> run world -- <subcommand>` -> `blr world <subcommand>`
+- `<packageManager> run assets:check` -> `blr world build --check`
 - `<packageManager> run clean` -> `blr clean`
 - `<packageManager> run upgrade` -> `blr upgrade`
+
+New projects also default `check` to `npm run assets:check && blr build`. `blr upgrade` reconciles `assets:check` but preserves a project's existing custom `check` workflow.
