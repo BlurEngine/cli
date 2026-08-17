@@ -130,7 +130,28 @@ async function loadHelpers(): Promise<McbeLeveldbHelpers> {
     assertSubChunkPrefixFormat(moduleName, moduleValue);
     assertBlockEntityFormat(moduleName, moduleValue);
 
-    return moduleValue as McbeLeveldbHelpers;
+    const helpers = moduleValue as McbeLeveldbHelpers;
+    return Object.freeze({
+        readData3dValue: helpers.readData3dValue,
+        writeData3DValue: helpers.writeData3DValue,
+        getChunkKeyIndices: helpers.getChunkKeyIndices,
+        generateChunkKeyFromIndices(
+            indices: Parameters<
+                McbeLeveldbHelpers["generateChunkKeyFromIndices"]
+            >[0],
+            chunkKeyType: Parameters<
+                McbeLeveldbHelpers["generateChunkKeyFromIndices"]
+            >[1],
+        ) {
+            return helpers.generateChunkKeyFromIndices(
+                { ...indices },
+                chunkKeyType,
+            );
+        },
+        getContentTypeFromDBKey: helpers.getContentTypeFromDBKey,
+        getBiomeTypeFromID: helpers.getBiomeTypeFromID,
+        entryContentTypeToFormatMap: helpers.entryContentTypeToFormatMap,
+    });
 }
 
 export function loadMcbeLeveldbHelpers(): Promise<McbeLeveldbHelpers> {
