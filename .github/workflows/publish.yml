@@ -37,7 +37,7 @@ jobs:
         run: npm run check
 
       - name: Create or update release PR
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           commit: "chore: version packages"
           title: "chore: version packages"
