@@ -1,5 +1,11 @@
 # @blurengine/cli
 
+## 0.15.0
+
+### Minor Changes
+
+- [#77](https://github.com/BlurEngine/cli/pull/77) [`88b9690`](https://github.com/BlurEngine/cli/commit/88b9690f76f1abeb8fda3e0d0ac6b2ba03faac8d) Thanks [@SupaHam](https://github.com/SupaHam)! - Add deterministic world processors with immutable Bedrock observations, canonical JSON or TypeScript runtime pointers, verified staged-world mutations, content-addressed artifacts, processed development and packaging, and authored-versus-processed publication safety. Update archive, compiler, and LevelDB dependencies, and preserve caller-owned chunk coordinates across the LevelDB compatibility boundary.
+
 ## 0.14.0
 
 ### Minor Changes
