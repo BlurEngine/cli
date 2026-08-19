@@ -166,6 +166,7 @@ Runtime world safety:
   - `prompt`: ask before replacing it
   - `preserve`: keep it
 - runtime backup and replacement only happen before BDS starts
+- processed development worlds follow the same startup policy; `replace` rebuilds and reseeds the processed world on each `blr dev` startup without resetting it during script-only hot reloads
 
 Flags:
 

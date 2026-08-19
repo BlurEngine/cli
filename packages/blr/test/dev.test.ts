@@ -9,6 +9,7 @@ import {
     buildRemoteWorldSyncFailureMessage,
     createWorldProcessorWatchPlan,
     mergePipelineModes,
+    resolveProcessedRuntimeWorldDecision,
     resolveRuntimeWorldDecision,
     resolveProjectWatchChangeAction,
     resolveLocalServerLinkOptions,
@@ -465,6 +466,51 @@ test("resolveRuntimeWorldDecision refreshes runtime worlds in replace mode even 
     });
 
     assert.equal(decision.action, "replace");
+});
+
+test("resolveProcessedRuntimeWorldDecision honors replace mode at startup even when the processed seed matches", () => {
+    assert.deepEqual(
+        resolveProcessedRuntimeWorldDecision({
+            reconcileRequested: true,
+            runtimeWorldExists: true,
+            runtimeWorldMode: "replace",
+            sourceMatches: true,
+        }),
+        { action: "replace" },
+    );
+});
+
+test("resolveProcessedRuntimeWorldDecision preserves a running world for script-only reloads", () => {
+    assert.deepEqual(
+        resolveProcessedRuntimeWorldDecision({
+            reconcileRequested: false,
+            runtimeWorldExists: true,
+            runtimeWorldMode: "replace",
+            sourceMatches: true,
+        }),
+        { action: "preserve" },
+    );
+});
+
+test("resolveProcessedRuntimeWorldDecision keeps processed preserve and backup modes distinct", () => {
+    assert.deepEqual(
+        resolveProcessedRuntimeWorldDecision({
+            reconcileRequested: true,
+            runtimeWorldExists: true,
+            runtimeWorldMode: "preserve",
+            sourceMatches: false,
+        }),
+        { action: "preserve" },
+    );
+    assert.deepEqual(
+        resolveProcessedRuntimeWorldDecision({
+            reconcileRequested: true,
+            runtimeWorldExists: true,
+            runtimeWorldMode: "backup",
+            sourceMatches: true,
+        }),
+        { action: "backup-and-replace" },
+    );
 });
 
 test("buildRemoteWorldSyncFailureMessage replaces raw unknown backend errors with a helpful dev warning", () => {

@@ -544,6 +544,7 @@ Notes:
   - `replace`: replace the runtime world automatically from the project world before startup
   - `backup`: move the existing runtime world into `worlds_backups/` and then replace it before startup
 - runtime-world replacement and backup only happen before BDS starts; `blr` does not modify a running server world
+- the same `runtimeWorldMode` policy applies when development world processors produce the world that BDS runs; `replace` reseeds that processed world on each `blr dev` startup, while script-only hot reloads preserve the running world
 - `watch-world` starts after startup reconciliation and captures runtime world state back into the project source
 - `watch-allowlist` captures both retained runtime server-state files:
   - `allowlist.json`

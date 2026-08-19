@@ -42,7 +42,7 @@ import {
 import { buildTrackedProjectWorldFingerprint } from "../project-world-state.js";
 import { runPrompt } from "../prompt.js";
 import { buildProject, runLocalDeploy } from "../runtime.js";
-import type { BlurProject } from "../types.js";
+import type { BlurProject, WorldSyncRuntimeMode } from "../types.js";
 import {
     clearLocalServerSession,
     clearRuntimeWorldSeedState,
@@ -971,6 +971,37 @@ type RuntimeWorldDecision =
           sourceIdentity: string;
           note?: string;
       };
+
+type ProcessedRuntimeWorldDecision = Readonly<{
+    action: "backup-and-replace" | "preserve" | "prompt" | "replace";
+}>;
+
+export function resolveProcessedRuntimeWorldDecision(options: {
+    reconcileRequested: boolean;
+    runtimeWorldExists: boolean;
+    runtimeWorldMode: WorldSyncRuntimeMode;
+    sourceMatches: boolean;
+}): ProcessedRuntimeWorldDecision {
+    if (!options.runtimeWorldExists) {
+        return { action: "replace" };
+    }
+    if (!options.reconcileRequested) {
+        return { action: "preserve" };
+    }
+    switch (options.runtimeWorldMode) {
+        case "replace":
+            return { action: "replace" };
+        case "backup":
+            return { action: "backup-and-replace" };
+        case "preserve":
+            return { action: "preserve" };
+        case "prompt":
+        default:
+            return options.sourceMatches
+                ? { action: "preserve" }
+                : { action: "prompt" };
+    }
+}
 
 function buildRuntimeWorldOutOfSyncMessage(
     worldName: string,
@@ -2732,12 +2763,63 @@ export async function runDevCommand(options: DevCommandOptions): Promise<void> {
                           ),
                       )
                     : false;
+                let processedDecision = resolveProcessedRuntimeWorldDecision({
+                    reconcileRequested: options.rebuildProcessedWorld,
+                    runtimeWorldExists,
+                    runtimeWorldMode:
+                        config.dev.localServer.worldSync.runtimeWorldMode,
+                    sourceMatches:
+                        lastSeed?.sourceIdentity ===
+                        currentProcessedWorldInput.seedIdentity,
+                });
+                if (processedDecision.action === "prompt") {
+                    if (!canPromptForDevWorldSync()) {
+                        processedDecision = { action: "preserve" };
+                        console.log(
+                            buildRuntimeWorldOutOfSyncMessage(
+                                currentProcessedWorldInput.worldName,
+                                "keeping existing local-server world because this run is non-interactive",
+                            ),
+                        );
+                    } else {
+                        switch (
+                            await promptForRuntimeWorldAction(
+                                currentProcessedWorldInput.worldName,
+                            )
+                        ) {
+                            case "replace":
+                                processedDecision = { action: "replace" };
+                                break;
+                            case "backup":
+                                processedDecision = {
+                                    action: "backup-and-replace",
+                                };
+                                break;
+                            case "keep":
+                            default:
+                                processedDecision = { action: "preserve" };
+                                break;
+                        }
+                    }
+                }
                 const replaceProcessedWorld =
-                    !runtimeWorldExists ||
-                    lastSeed?.sourceIdentity !==
-                        currentProcessedWorldInput.seedIdentity;
+                    processedDecision.action === "replace" ||
+                    processedDecision.action === "backup-and-replace";
+                if (processedDecision.action === "backup-and-replace") {
+                    if (!runtimeState) {
+                        throw new Error(
+                            "Processed runtime-world backup requires a resolved local-server runtime.",
+                        );
+                    }
+                    await localServer.stop({
+                        suppressExitNotification: true,
+                    });
+                    await backupRuntimeWorldForBdsStartup(runtimeState, debug);
+                }
                 const processedApplyMode: PipelineMode = replaceProcessedWorld
-                    ? "restart"
+                    ? processedDecision.action === "backup-and-replace"
+                        ? "start"
+                        : "restart"
                     : mode;
                 await waitForPromiseIfSlow(
                     localServer.apply(processedApplyMode, {
