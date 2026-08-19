@@ -1,5 +1,11 @@
 # @blurengine/cli
 
+## 0.15.1
+
+### Patch Changes
+
+- [`ecf78cb`](https://github.com/BlurEngine/cli/commit/ecf78cbc8e7771e750a733939928949646fc9892) Thanks [@SupaHam](https://github.com/SupaHam)! - Honor `dev.localServer.worldSync.runtimeWorldMode` for processed development worlds, including deterministic replace and backup behavior on `blr dev` startup while preserving script-only hot reloads.
+
 ## 0.15.0
 
 ### Minor Changes
